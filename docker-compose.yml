@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sabo_postgres
+    environment:
+      POSTGRES_USER: sabo
+      POSTGRES_PASSWORD: sabo_password
+      POSTGRES_DB: sabo_finance
+    ports:
+      - "5433:5432"
+    volumes:
+      - sabo_postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sabo -d sabo_finance"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: sabo_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - sabo_redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+volumes:
+  sabo_postgres_data:
+  sabo_redis_data:
+
