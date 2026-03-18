@@ -17,16 +17,6 @@ services:
       timeout: 3s
       retries: 20
 
-  redis:
-    image: redis:7-alpine
-    container_name: sabo_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - sabo_redis_data:/data
-    command: ["redis-server", "--appendonly", "yes"]
-
 volumes:
   sabo_postgres_data:
-  sabo_redis_data:
 

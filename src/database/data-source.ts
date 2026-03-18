@@ -20,5 +20,6 @@ export const AppDataSource = new DataSource({
   synchronize: false,
   entities: [User, Wallet, LedgerEntry, Deposit, ExchangeRate, Kyc, AdminLog],
   migrations: ['src/database/migrations/*.ts'],
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 

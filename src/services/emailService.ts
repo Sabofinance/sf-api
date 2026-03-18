@@ -16,7 +16,7 @@ function getSecureFlag(port: number | string): boolean {
 
 const smtpPort = env.SMTP_PORT || 587; // fallback to most common secure submission port
 
-const isSmtpConfigured = !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+const isSmtpConfigured = env.EMAIL_ENABLED && !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
 
 let transporter: nodemailer.Transporter | null = null;
 
@@ -34,6 +34,10 @@ if (isSmtpConfigured) {
     pool: true, // reuse connections (great for multiple emails)
     maxMessages: 100, // prevent overload
     rateDelta: 1000, // 1 message/sec max (adjust as needed)
+    // Add timeouts to prevent ETIMEDOUT from hanging the app
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 
   // Verify connection once at startup (optional but very useful)
@@ -46,9 +50,13 @@ if (isSmtpConfigured) {
       // In production: notify admin, don't crash the whole app
     }
   })();
-} else {
+} else if (env.EMAIL_ENABLED) {
   console.warn(
-    'SMTP is not configured (SMTP_HOST, SMTP_USER, SMTP_PASS missing). Emails will be logged to the console instead.',
+    'EMAIL_ENABLED is true, but SMTP configuration is missing (SMTP_HOST, SMTP_USER, SMTP_PASS). Emails will be logged to the console.',
+  );
+} else {
+  console.log(
+    'EMAIL_ENABLED is false. Emails will be logged to the console instead of being sent.',
   );
 }
 
