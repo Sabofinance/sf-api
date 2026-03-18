@@ -32,14 +32,22 @@ const resetPasswordSchema = z.object({
   password: z.string().min(8),
 });
 
+const refreshTokenSchema = z.object({
+  refreshToken: z.string(),
+});
+
 function signAccessToken(user: { id: string; role: UserRole }) {
   if (!env.JWT_SECRET) throw new AppError('CONFIG_ERROR', 'JWT_SECRET is required', 500);
   return jwt.sign({ role: user.role }, env.JWT_SECRET, { subject: user.id, expiresIn: '15m' });
 }
 
 function signRefreshToken(user: { id: string; role: UserRole }) {
-  if (!env.JWT_REFRESH_SECRET) throw new AppError('CONFIG_ERROR', 'JWT_REFRESH_SECRET is required', 500);
-  return jwt.sign({ role: user.role }, env.JWT_REFRESH_SECRET, { subject: user.id, expiresIn: '30d' });
+  if (!env.JWT_REFRESH_SECRET)
+    throw new AppError('CONFIG_ERROR', 'JWT_REFRESH_SECRET is required', 500);
+  return jwt.sign({ role: user.role }, env.JWT_REFRESH_SECRET, {
+    subject: user.id,
+    expiresIn: '30d',
+  });
 }
 
 /**
@@ -162,8 +170,8 @@ export async function login(req: Request, res: Response) {
   await sendEmail({
     to: user.email,
     subject: 'Your OTP for Sabo Finance',
-    text: `Your OTP is ${otp}`,
-    html: `<b>Your OTP is ${otp}</b>`,
+    template: 'otp',
+    context: { otp },
   });
 
   return ok(res, { message: 'An OTP has been sent to your email.' });
@@ -219,7 +227,9 @@ export async function verifyOtp(req: Request, res: Response) {
   }
 
   await withTransaction(async (qr) => {
-    await qr.query('UPDATE "users" SET "otp" = NULL, "otp_expires" = NULL WHERE "id" = $1', [user.id]);
+    await qr.query('UPDATE "users" SET "otp" = NULL, "otp_expires" = NULL WHERE "id" = $1', [
+      user.id,
+    ]);
   });
 
   const accessToken = signAccessToken({ id: user.id, role: user.role });
@@ -289,10 +299,19 @@ export async function forgotPassword(req: Request, res: Response) {
     );
 
     // In a real application, you would send an email with the resetToken
-    console.log(`Password reset token for ${input.email}: ${resetToken}`);
+    const resetLink = `https://sabofinance.com/reset-password?token=${resetToken}`;
+    await sendEmail({
+      to: input.email.toLowerCase(),
+      subject: 'Reset Your Password',
+      template: 'forgot-password',
+      context: { resetLink },
+    });
+    console.log(`Password reset link sent to ${input.email}: ${resetLink}`);
   });
 
-  return ok(res, { message: 'If a user with that email exists, a password reset link has been sent.' });
+  return ok(res, {
+    message: 'If a user with that email exists, a password reset link has been sent.',
+  });
 }
 
 /**
@@ -352,3 +371,71 @@ export async function resetPassword(req: Request, res: Response) {
   return ok(res, { message: 'Password has been reset successfully.' });
 }
 
+/**
+ * @swagger
+ * /auth/refresh-token:
+ *   post:
+ *     summary: Refresh access token
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [refreshToken]
+ *             properties:
+ *               refreshToken: { type: string }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ *       401:
+ *         description: Invalid refresh token
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiErrorEnvelope" }
+ */
+export async function refreshToken(req: Request, res: Response) {
+  const input = await refreshTokenSchema.parse(req.body);
+
+  if (!input.refreshToken) {
+    throw new AppError('REFRESH_TOKEN_MISSING', 'Refresh token is required', 400);
+  }
+
+  try {
+    
+    // Convert to unknown first, then assert type
+    if (!env.JWT_REFRESH_SECRET)
+      throw new AppError('CONFIG_ERROR', 'JWT_REFRESH_SECRET is required', 500);
+    const payload = jwt.verify(input.refreshToken, env.JWT_REFRESH_SECRET) as unknown as {
+      sub: string;
+      role: UserRole;
+    };
+    console.log(payload);
+
+    if (!payload.sub || !payload.role) {
+      throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token payload is invalid', 401);
+    }
+
+    // Optional: verify user exists
+    const user = await withTransaction(async (qr) => {
+      const rows = (await qr.query('SELECT "id","role" FROM "users" WHERE "id" = $1 LIMIT 1', [
+        payload.sub,
+      ])) as Array<{ id: string; role: UserRole }>;
+      return rows[0];
+    });
+
+    if (!user) throw new AppError('USER_NOT_FOUND', 'User not found', 401);
+
+    // Issue new tokens
+    const newAccessToken = signAccessToken({ id: user.id, role: user.role });
+    const newRefreshToken = signRefreshToken({ id: user.id, role: user.role });
+
+    return ok(res, { tokens: { accessToken: newAccessToken, refreshToken: newRefreshToken } });
+  } catch (err) {
+    throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token is invalid or expired', 401);
+  }
+}

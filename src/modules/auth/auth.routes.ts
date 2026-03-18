@@ -2,7 +2,7 @@ import { Router } from 'express';
 
 import { authMiddleware } from '../../middleware/authMiddleware';
 import { asyncHandler } from '../../utils/asyncHandler';
-import { login, logout, register, forgotPassword, resetPassword, verifyOtp } from './auth.controller';
+import { login, logout, register, forgotPassword, resetPassword, verifyOtp, refreshToken } from './auth.controller';
 
 export const authRouter = Router();
 
@@ -12,4 +12,5 @@ authRouter.post('/logout', authMiddleware, asyncHandler(logout));
 authRouter.post('/forgot-password', asyncHandler(forgotPassword));
 authRouter.post('/reset-password', asyncHandler(resetPassword));
 authRouter.post('/verify-otp', asyncHandler(verifyOtp));
+authRouter.post('/refresh-token', asyncHandler(refreshToken));
 

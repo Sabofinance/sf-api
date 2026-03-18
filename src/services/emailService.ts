@@ -1,4 +1,6 @@
 import nodemailer from 'nodemailer';
+import fs from 'fs/promises';
+import path from 'path';
 import { env } from '../config/env';
 
 // Helper to determine secure flag based on common SMTP ports
@@ -55,15 +57,34 @@ interface EmailOptions {
   subject: string;
   text?: string; // optional if only html
   html?: string; // optional if only text
+  template?: string;
+  context?: Record<string, string>;
   // You can easily extend later: cc, bcc, attachments, replyTo, etc.
 }
 
 export async function sendEmail(options: EmailOptions): Promise<{ messageId: string }> {
+  let { html, text, template, context } = options;
+
+  if (template) {
+    const templatePath = path.join(__dirname, '../templates/emails', `${template}.html`);
+    try {
+      let content = await fs.readFile(templatePath, 'utf-8');
+      if (context) {
+        Object.entries(context).forEach(([key, value]) => {
+          content = content.replace(new RegExp(`{{${key}}}`, 'g'), value);
+        });
+      }
+      html = content;
+    } catch (error) {
+      console.error(`Failed to load email template: ${template}`, error);
+    }
+  }
+
   if (!transporter) {
     console.log('--- EMAIL MOCK ---');
     console.log(`To: ${options.to}`);
     console.log(`Subject: ${options.subject}`);
-    console.log(`Text: ${options.text}`);
+    console.log(`Text: ${text}`);
     console.log('-------------------');
     return { messageId: 'mock-id-' + Date.now() };
   }
@@ -72,6 +93,8 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
     const info = await transporter.sendMail({
       from: `"Sabo Finance" <${env.SMTP_USER}>`, // consistent & safe
       ...options,
+      html,
+      text,
     });
 
     console.log('Email sent successfully - Message ID:', info.messageId);
