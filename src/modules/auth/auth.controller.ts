@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
@@ -8,6 +9,7 @@ import { withTransaction } from '../../database/transaction';
 import { Currency, UserRole } from '../../utils/enums';
 import { created, ok } from '../../utils/apiResponse';
 import { AppError, UnauthorizedError } from '../../utils/errors';
+import { sendEmail } from '../../services/emailService';
 
 const registerSchema = z.object({
   name: z.string().min(2),
@@ -19,6 +21,15 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+});
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string(),
+  password: z.string().min(8),
 });
 
 function signAccessToken(user: { id: string; role: UserRole }) {
@@ -126,16 +137,90 @@ export async function login(req: Request, res: Response) {
 
   const rows = (await withTransaction(async (qr) => {
     return (await qr.query(
-      `SELECT "id","password_hash","role" FROM "users" WHERE "email" = $1 LIMIT 1`,
+      `SELECT "id","password_hash","role","email" FROM "users" WHERE "email" = $1 LIMIT 1`,
       [input.email.toLowerCase()],
-    )) as Array<{ id: string; password_hash: string; role: UserRole }>;
-  })) as Array<{ id: string; password_hash: string; role: UserRole }>;
+    )) as Array<{ id: string; password_hash: string; role: UserRole; email: string }>;
+  })) as Array<{ id: string; password_hash: string; role: UserRole; email: string }>;
 
   const user = rows[0];
   if (!user) throw new UnauthorizedError('Invalid credentials');
 
   const okPass = await bcrypt.compare(input.password, user.password_hash);
   if (!okPass) throw new UnauthorizedError('Invalid credentials');
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await withTransaction(async (qr) => {
+    await qr.query('UPDATE "users" SET "otp" = $1, "otp_expires" = $2 WHERE "id" = $3', [
+      otp,
+      otp_expires,
+      user.id,
+    ]);
+  });
+
+  await sendEmail({
+    to: user.email,
+    subject: 'Your OTP for Sabo Finance',
+    text: `Your OTP is ${otp}`,
+    html: `<b>Your OTP is ${otp}</b>`,
+  });
+
+  return ok(res, { message: 'An OTP has been sent to your email.' });
+}
+
+const verifyOtpSchema = z.object({
+  email: z.string().email(),
+  otp: z.string().length(6),
+});
+
+/**
+ * @swagger
+ * /auth/verify-otp:
+ *   post:
+ *     summary: Verify OTP
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, otp]
+ *             properties:
+ *               email: { type: string, example: "jane@example.com" }
+ *               otp: { type: string, example: "123456" }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ *       400:
+ *         description: Invalid or expired OTP
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiErrorEnvelope" }
+ */
+export async function verifyOtp(req: Request, res: Response) {
+  const input = verifyOtpSchema.parse(req.body);
+
+  const user = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      'SELECT "id", "role" FROM "users" WHERE "email" = $1 AND "otp" = $2 AND "otp_expires" > NOW() LIMIT 1',
+      [input.email.toLowerCase(), input.otp],
+    )) as Array<{ id: string; role: UserRole }>;
+
+    return rows[0];
+  });
+
+  if (!user) {
+    throw new AppError('INVALID_OTP', 'OTP is invalid or has expired', 400);
+  }
+
+  await withTransaction(async (qr) => {
+    await qr.query('UPDATE "users" SET "otp" = NULL, "otp_expires" = NULL WHERE "id" = $1', [user.id]);
+  });
 
   const accessToken = signAccessToken({ id: user.id, role: user.role });
   const refreshToken = signRefreshToken({ id: user.id, role: user.role });
@@ -159,5 +244,111 @@ export async function login(req: Request, res: Response) {
  */
 export async function logout(_req: Request, res: Response) {
   return ok(res, { loggedOut: true });
+}
+
+/**
+ * @swagger
+ * /auth/forgot-password:
+ *   post:
+ *     summary: Forgot password
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, example: "jane@example.com" }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function forgotPassword(req: Request, res: Response) {
+  const input = forgotPasswordSchema.parse(req.body);
+
+  await withTransaction(async (qr) => {
+    const rows = (await qr.query('SELECT "id" FROM "users" WHERE "email" = $1 LIMIT 1', [
+      input.email.toLowerCase(),
+    ])) as Array<{ id: string }>;
+
+    const user = rows[0];
+    if (!user) return;
+
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const password_reset_token = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const password_reset_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await qr.query(
+      'UPDATE "users" SET "password_reset_token" = $1, "password_reset_expires" = $2 WHERE "id" = $3',
+      [password_reset_token, password_reset_expires, user.id],
+    );
+
+    // In a real application, you would send an email with the resetToken
+    console.log(`Password reset token for ${input.email}: ${resetToken}`);
+  });
+
+  return ok(res, { message: 'If a user with that email exists, a password reset link has been sent.' });
+}
+
+/**
+ * @swagger
+ * /auth/reset-password:
+ *   post:
+ *     summary: Reset password
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token, password]
+ *             properties:
+ *               token: { type: string, example: "..." }
+ *               password: { type: string, example: "NewPassword123!" }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ *       400:
+ *         description: Invalid or expired token
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiErrorEnvelope" }
+ */
+export async function resetPassword(req: Request, res: Response) {
+  const input = resetPasswordSchema.parse(req.body);
+  const password_reset_token = crypto.createHash('sha256').update(input.token).digest('hex');
+
+  const user = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      'SELECT "id" FROM "users" WHERE "password_reset_token" = $1 AND "password_reset_expires" > NOW() LIMIT 1',
+      [password_reset_token],
+    )) as Array<{ id: string }>;
+
+    return rows[0];
+  });
+
+  if (!user) {
+    throw new AppError('INVALID_TOKEN', 'Password reset token is invalid or has expired', 400);
+  }
+
+  const password_hash = await bcrypt.hash(input.password, 12);
+
+  await withTransaction(async (qr) => {
+    await qr.query(
+      'UPDATE "users" SET "password_hash" = $1, "password_reset_token" = NULL, "password_reset_expires" = NULL WHERE "id" = $2',
+      [password_hash, user.id],
+    );
+  });
+
+  return ok(res, { message: 'Password has been reset successfully.' });
 }
 

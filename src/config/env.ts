@@ -14,6 +14,10 @@ const envSchema = z.object({
   FLUTTERWAVE_WEBHOOK_HASH: z.string().min(1).optional(),
   FX_API_KEY: z.string().min(1).optional(),
   CLOUDINARY_URL: z.string().min(1).optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

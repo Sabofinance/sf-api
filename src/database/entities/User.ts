@@ -21,6 +21,18 @@ export class User {
   @Column({ type: 'varchar', length: 255 })
   password_hash!: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  password_reset_token?: string;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  password_reset_expires?: Date;
+
+  @Column({ type: 'varchar', length: 6, nullable: true })
+  otp?: string;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  otp_expires?: Date;
+
   @Column({ type: 'boolean', default: false })
   email_verified!: boolean;
 
