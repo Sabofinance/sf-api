@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trade Completed – Sabo Finance</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
+    <style>
+         :root {
+            --dark: #0a1e28;
+            --lime: #c8f032;
+            --white: #ffffff;
+            --off: #f4f6f2;
+            --border: #e4e8df;
+            --muted: #6b7a5e;
+        }
+        
+        body {
+            background-color: var(--off);
+            font-family: 'DM Sans', sans-serif;
+        }
+        
+        .email-wrapper {
+            max-width: 600px;
+            margin: 48px auto;
+            padding: 0 16px;
+        }
+        
+        .card {
+            background: var(--white);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .card-header {
+            background: var(--dark);
+            padding: 32px 44px;
+            text-align: center;
+        }
+        
+        .card-title {
+            font-family: 'DM Serif Display', serif;
+            font-size: 32px;
+            color: #f0f4ee;
+        }
+        
+        .card-body {
+            padding: 40px 44px;
+        }
+        
+        .greeting {
+            font-size: 14.5px;
+            color: #3d4d38;
+            margin-bottom: 32px;
+            line-height: 1.7;
+        }
+        
+        .details {
+            margin-bottom: 24px;
+        }
+        
+        .details p {
+            margin-bottom: 8px;
+        }
+        
+        .card-footer {
+            border-top: 1px solid var(--border);
+            padding: 22px 44px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="email-wrapper">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Trade Completed</div>
+            </div>
+            <div class="card-body">
+                <div class="greeting">
+                    Hello <strong>{{name}}</strong>, your trade with reference <strong>{{reference}}</strong> has been successfully completed.
+                </div>
+                <div class="details">
+                    <p><strong>Amount:</strong> {{amount}} {{currency}}</p>
+                    <p><strong>Rate:</strong> 1 {{currency}} = {{rate}} NGN</p>
+                    <p><strong>Total:</strong> {{totalNgn}} NGN</p>
+                </div>
+            </div>
+            <div class="card-footer">
+                &copy; 2026 Sabo Finance. All rights reserved.
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

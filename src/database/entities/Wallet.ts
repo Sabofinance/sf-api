@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 
 import { Currency } from '../../utils/enums';
+
 import { User } from './User';
 
 @Entity({ name: 'wallets' })
@@ -28,8 +29,11 @@ export class Wallet {
   @Column({ type: 'numeric', precision: 18, scale: 2, default: '0' })
   balance!: string;
 
-  @Column({ type: 'numeric', precision: 18, scale: 2, default: '0' })
+  @Column({ type: 'numeric', precision: 18, scale: 2, default: 0 })
   locked_balance!: string;
+
+  @Column({ type: 'numeric', precision: 18, scale: 2, default: 0 })
+  escrow_balance!: string;
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updated_at!: Date;

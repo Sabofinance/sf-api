@@ -1,15 +1,16 @@
-import type { Request, Response } from 'express';
-import bcrypt from 'bcrypt';
 import crypto from 'crypto';
+
+import bcrypt from 'bcrypt';
+import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
 import { env } from '../../config/env';
 import { withTransaction } from '../../database/transaction';
-import { Currency, UserRole } from '../../utils/enums';
-import { created, ok } from '../../utils/apiResponse';
-import { AppError, UnauthorizedError } from '../../utils/errors';
 import { sendEmail } from '../../services/emailService';
+import { created, ok } from '../../utils/apiResponse';
+import { Currency, UserRole } from '../../utils/enums';
+import { AppError, UnauthorizedError } from '../../utils/errors';
 
 const registerSchema = z.object({
   name: z.string().min(2),
@@ -36,19 +37,13 @@ const refreshTokenSchema = z.object({
   refreshToken: z.string(),
 });
 
-function signAccessToken(user: { id: string; role: UserRole }) {
-  const payload = {
-    sub: String(user.id),
-    role: String(user.role),
-  };
+function signAccessToken(user: { id: string; name: string; email: string; role: UserRole; kyc_status: string }) {
+  const payload = { id: user.id, name: user.name, email: user.email, role: user.role, kyc_status: user.kyc_status };
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '15m' });
 }
 
-function signRefreshToken(user: { id: string; role: UserRole }) {
-  const payload = {
-    sub: String(user.id),
-    role: String(user.role),
-  };
+function signRefreshToken(user: { id: string; name: string; email: string; role: UserRole; kyc_status: string }) {
+  const payload = { id: user.id, name: user.name, email: user.email, role: user.role, kyc_status: user.kyc_status };
   return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: '30d' });
 }
 
@@ -94,7 +89,7 @@ export async function register(req: Request, res: Response) {
       [input.name, input.email.toLowerCase(), input.phone, password_hash, UserRole.user],
     )) as Array<Record<string, unknown>>;
 
-    const user = rows[0] as { id: string; role: UserRole };
+    const user = rows[0] as { id: string; role: UserRole; kyc_status: string };
     const currencies = [Currency.NGN, Currency.GBP, Currency.USD, Currency.CAD] as const;
     for (const currency of currencies) {
       await qr.query(
@@ -107,9 +102,20 @@ export async function register(req: Request, res: Response) {
     return rows[0];
   });
 
-  const user = result as any;
-  const accessToken = signAccessToken({ id: user.id, role: user.role });
-  const refreshToken = signRefreshToken({ id: user.id, role: user.role });
+  const user = result as unknown as { id: string; name: string; email: string; role: UserRole; kyc_status: string };
+
+  // Send verification email
+  const verificationToken = jwt.sign({ id: user.id, email: user.email, purpose: 'verify-email' }, env.JWT_SECRET, { expiresIn: '1h' });
+  const verificationLink = `http://localhost:3000/auth/verify-email?token=${verificationToken}`;
+  await sendEmail({
+    to: user.email,
+    subject: 'Verify Your Email Address',
+    template: 'email-verification',
+    context: { name: user.name, verificationLink },
+  });
+
+  const accessToken = signAccessToken(user);
+  const refreshToken = signRefreshToken(user);
 
   return created(res, { user, tokens: { accessToken, refreshToken } });
 }
@@ -147,10 +153,10 @@ export async function login(req: Request, res: Response) {
 
   const rows = (await withTransaction(async (qr) => {
     return (await qr.query(
-      `SELECT "id","password_hash","role","email" FROM "users" WHERE "email" = $1 LIMIT 1`,
+      `SELECT "id","password_hash","role","email","name","kyc_status" FROM "users" WHERE "email" = $1 LIMIT 1`,
       [input.email.toLowerCase()],
-    )) as Array<{ id: string; password_hash: string; role: UserRole; email: string }>;
-  })) as Array<{ id: string; password_hash: string; role: UserRole; email: string }>;
+    )) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; }>;
+  })) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; }>;
 
   const user = rows[0];
   if (!user) throw new UnauthorizedError('Invalid credentials');
@@ -217,9 +223,9 @@ export async function verifyOtp(req: Request, res: Response) {
 
   const user = await withTransaction(async (qr) => {
     const rows = (await qr.query(
-      'SELECT "id", "role" FROM "users" WHERE "email" = $1 AND "otp" = $2 AND "otp_expires" > NOW() LIMIT 1',
+      'SELECT "id", "name", "email", "role", "kyc_status" FROM "users" WHERE "email" = $1 AND "otp" = $2 AND "otp_expires" > NOW() LIMIT 1',
       [input.email.toLowerCase(), input.otp],
-    )) as Array<{ id: string; role: UserRole }>;
+    )) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string }>;
 
     return rows[0];
   });
@@ -234,8 +240,8 @@ export async function verifyOtp(req: Request, res: Response) {
     ]);
   });
 
-  const accessToken = signAccessToken({ id: user.id, role: user.role });
-  const refreshToken = signRefreshToken({ id: user.id, role: user.role });
+  const accessToken = signAccessToken(user);
+  const refreshToken = signRefreshToken(user);
 
   return ok(res, { tokens: { accessToken, refreshToken } });
 }
@@ -284,9 +290,9 @@ export async function forgotPassword(req: Request, res: Response) {
   const input = forgotPasswordSchema.parse(req.body);
 
   await withTransaction(async (qr) => {
-    const rows = (await qr.query('SELECT "id" FROM "users" WHERE "email" = $1 LIMIT 1', [
+    const rows = (await qr.query('SELECT "id", "name", "email" FROM "users" WHERE "email" = $1 LIMIT 1', [
       input.email.toLowerCase(),
-    ])) as Array<{ id: string }>;
+    ])) as Array<{ id: string; name: string; email: string }>;
 
     const user = rows[0];
     if (!user) return;
@@ -350,9 +356,9 @@ export async function resetPassword(req: Request, res: Response) {
 
   const user = await withTransaction(async (qr) => {
     const rows = (await qr.query(
-      'SELECT "id" FROM "users" WHERE "password_reset_token" = $1 AND "password_reset_expires" > NOW() LIMIT 1',
+      'SELECT "id", "name", "email" FROM "users" WHERE "password_reset_token" = $1 AND "password_reset_expires" > NOW() LIMIT 1',
       [password_reset_token],
-    )) as Array<{ id: string }>;
+    )) as Array<{ id: string; name: string; email: string }>;
 
     return rows[0];
   });
@@ -366,8 +372,18 @@ export async function resetPassword(req: Request, res: Response) {
   await withTransaction(async (qr) => {
     await qr.query(
       'UPDATE "users" SET "password_hash" = $1, "password_reset_token" = NULL, "password_reset_expires" = NULL WHERE "id" = $2',
-      [password_hash, user.id],
-    );
+      [password_hash, user.id,
+    ]);
+
+    await sendEmail({
+      to: user.email,
+      subject: 'Security Alert: Password Changed',
+      template: 'security-alert',
+      context: {
+        name: user.name,
+        message: 'Your password has been successfully changed. If you did not authorize this, please contact support immediately.',
+      },
+    });
   });
 
   return ok(res, { message: 'Password has been reset successfully.' });
@@ -412,30 +428,33 @@ export async function refreshToken(req: Request, res: Response) {
     if (!env.JWT_REFRESH_SECRET)
       throw new AppError('CONFIG_ERROR', 'JWT_REFRESH_SECRET is required', 500);
     const payload = jwt.verify(input.refreshToken, env.JWT_REFRESH_SECRET) as {
-      sub: string;
+      id: string;
+      name: string;
+      email: string;
       role: UserRole;
+      kyc_status: string;
     };
 
-    if (!payload.sub || !payload.role) {
+    if (!payload.id || !payload.role) {
       throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token payload is invalid', 401);
     }
 
     // Optional: verify user exists
     const user = await withTransaction(async (qr) => {
-      const rows = (await qr.query('SELECT "id","role" FROM "users" WHERE "id" = $1 LIMIT 1', [
-        payload.sub,
-      ])) as Array<{ id: string; role: UserRole }>;
+      const rows = (await qr.query('SELECT "id", "name", "email", "role", "kyc_status" FROM "users" WHERE "id" = $1 LIMIT 1', [
+        payload.id,
+      ])) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string }>;
       return rows[0];
     });
 
     if (!user) throw new AppError('USER_NOT_FOUND', 'User not found', 401);
 
     // Issue new tokens
-    const newAccessToken = signAccessToken({ id: user.id, role: user.role });
-    const newRefreshToken = signRefreshToken({ id: user.id, role: user.role });
+    const newAccessToken = signAccessToken(user);
+    const newRefreshToken = signRefreshToken(user);
 
     return ok(res, { tokens: { accessToken: newAccessToken, refreshToken: newRefreshToken } });
-  } catch (err) {
+  } catch {
     throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token is invalid or expired', 401);
   }
 }

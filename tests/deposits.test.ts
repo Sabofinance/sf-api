@@ -1,8 +1,11 @@
 import request from 'supertest';
 
-import { app, makeAdmin, registerAndLogin } from './helpers';
+// import { Deposit } from '../src/database/entities/Deposit';
+import { LedgerEntry } from '../src/database/entities/LedgerEntry';
 import { withTransaction } from '../src/database/transaction';
 import { Currency, DepositStatus } from '../src/utils/enums';
+
+import { app, makeAdmin, registerAndLogin } from './helpers';
 
 describe('Deposits', () => {
   it('initiates NGN deposit', async () => {
@@ -52,7 +55,7 @@ describe('Deposits', () => {
     expect(walletAfter).toBe('1000.00');
 
     const ledgerRows = await withTransaction(async (qr) => {
-      return (await qr.query(`SELECT * FROM "ledger" WHERE "reference" = $1`, [reference])) as Array<any>;
+      return (await qr.query(`SELECT * FROM "ledger" WHERE "reference" = $1`, [reference])) as LedgerEntry[];
     });
     expect(ledgerRows.length).toBe(1);
     expect(ledgerRows[0].balance_before).toBe('0.00');

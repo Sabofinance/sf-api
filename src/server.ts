@@ -1,6 +1,6 @@
 import { createApp } from './app';
-import { AppDataSource } from './database/data-source';
 import { env } from './config/env';
+import { AppDataSource } from './database/data-source';
 
 async function bootstrap() {
   const app = createApp();

@@ -2,13 +2,16 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import { cloudinary } from '../../config/cloudinary';
+import { Deposit } from '../../database/entities/Deposit';
+import { User } from '../../database/entities/User';
 import { withTransaction } from '../../database/transaction';
 import { FlutterwaveProvider } from '../../providers/payments/FlutterwaveProvider';
+import { sendEmail } from '../../services/emailService';
+import { nextReference } from '../../services/referenceService';
+import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
 import { Currency, DepositStatus, LedgerType } from '../../utils/enums';
 import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
-import { nextReference } from '../../services/referenceService';
-import { WalletService } from '../../services/walletService';
 
 const initiateNgnSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d{1,2})?$/),
@@ -56,8 +59,8 @@ export async function initiateNgnDeposit(req: Request, res: Response) {
        VALUES (gen_random_uuid(), $1,$2,$3,$4,'flutterwave',NULL,NULL,$5,NULL, now())
        RETURNING *`,
       [reference, req.user!.id, Currency.NGN, input.amount, DepositStatus.initiated],
-    )) as Array<Record<string, unknown>>;
-    const dep = rows[0] as any;
+    )) as Deposit[];
+    const dep = rows[0];
     const init = await provider.initiateDeposit({
       amount: input.amount,
       currency: Currency.NGN,
@@ -97,7 +100,7 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
   const provider = new FlutterwaveProvider();
 
   try {
-    await provider.handleWebhook(req.body, req.headers as any);
+    await provider.handleWebhook(req.body, req.headers);
 
     const event = (req.body?.event ?? '') as string;
     if (event !== 'charge.completed') {
@@ -116,7 +119,7 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
     await withTransaction(async (qr) => {
       const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "reference" = $1 LIMIT 1`, [
         reference,
-      ])) as Array<any>;
+      ])) as Deposit[];
       const dep = rows[0];
       if (!dep) return;
 
@@ -140,6 +143,21 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
         String(data?.id ?? dep.provider_reference ?? dep.reference),
         dep.id,
       ]);
+
+      const userRows = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [dep.user_id])) as User[];
+      if (userRows.length > 0 && userRows[0].email) {
+        await sendEmail({
+          to: userRows[0].email,
+          subject: 'Deposit Confirmed',
+          template: 'deposit-confirmation',
+          context: {
+            name: userRows[0].name,
+            amount: dep.amount,
+            currency: dep.currency,
+            reference: dep.reference,
+          },
+        });
+      }
     });
   } catch {
     // Always return 200 to webhook.
@@ -240,7 +258,7 @@ export async function submitForeignDeposit(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
 
   const input = foreignDepositSchema.parse(req.body);
-  const file = (req as any).file as Express.Multer.File | undefined;
+  const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new AppError('PROOF_REQUIRED', 'Proof file is required', 400);
 
   if (!cloudinary.config().cloud_name) {

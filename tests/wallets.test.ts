@@ -1,5 +1,7 @@
 import request from 'supertest';
 
+import { Wallet } from '../src/database/entities/Wallet';
+
 import { app, registerAndLogin } from './helpers';
 
 describe('Wallets', () => {
@@ -7,7 +9,7 @@ describe('Wallets', () => {
     const { accessToken } = await registerAndLogin();
     const res = await request(app).get('/wallets').set('Authorization', `Bearer ${accessToken}`);
     expect(res.status).toBe(200);
-    const currencies = (res.body.data.wallets as any[]).map((w) => w.currency).sort();
+    const currencies = (res.body.data.wallets as Wallet[]).map((w) => w.currency).sort();
     expect(currencies).toEqual(['CAD', 'GBP', 'NGN', 'USD']);
   });
 
@@ -15,7 +17,8 @@ describe('Wallets', () => {
     const { accessToken } = await registerAndLogin();
     const res = await request(app).get('/wallets/NGN').set('Authorization', `Bearer ${accessToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.data.wallet.currency).toBe('NGN');
+    const wallet = res.body.data.wallet as Wallet;
+    expect(wallet.currency).toBe('NGN');
   });
 });
 

@@ -6,7 +6,10 @@ import { UnauthorizedError } from '../utils/errors';
 
 export type AuthUser = {
   id: string;
+  name: string;
+  email: string;
   role: 'user' | 'admin';
+  kyc_status: string;
 };
 
 declare global {
@@ -24,18 +27,28 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
     return next(new UnauthorizedError('Missing Bearer token'));
   }
 
-  // Remove any non-printable control characters or whitespace that might have been 
-  // injected by terminal line-wrapping or clipboard managers.
-  const token = header.slice('Bearer '.length).replace(/[\x00-\x1F\x7F-\x9F]/g, "").trim();
+  const token = header.slice('Bearer '.length).replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
   
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET) as { sub: string; role?: 'user' | 'admin' };
-    console.log(payload)
-    if (!payload?.sub) return next(new UnauthorizedError('Invalid token'));
-    req.user = { id: payload.sub, role: payload.role ?? 'user' };
+    const payload = jwt.verify(token, env.JWT_SECRET) as {
+      id?: string;
+      sub?: string;
+      name?: string;
+      email?: string;
+      role?: 'user' | 'admin';
+      kyc_status?: string;
+    };
+    const userId = payload.id ?? payload.sub;
+    if (!userId) return next(new UnauthorizedError('Invalid token'));
+    req.user = {
+      id: userId,
+      name: payload.name ?? '',
+      email: payload.email ?? '',
+      role: payload.role ?? 'user',
+      kyc_status: payload.kyc_status ?? 'unverified',
+    };
     return next();
-  } catch (err) {
-    console.log('JWT Verification Error:', err);
+  } catch {
     return next(new UnauthorizedError('Invalid token'));
   }
 }

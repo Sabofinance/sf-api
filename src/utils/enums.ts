@@ -36,3 +36,38 @@ export enum UserRole {
   admin = 'admin',
 }
 
+export enum WithdrawalStatus {
+  requested = 'requested',
+  approved = 'approved',
+  processing = 'processing',
+  completed = 'completed',
+  failed = 'failed',
+}
+
+export enum SabitType {
+  BUY = 'BUY',
+  SELL = 'SELL',
+}
+
+export enum SabitStatus {
+  active = 'active',
+  completed = 'completed',
+  cancelled = 'cancelled',
+  suspended = 'suspended',
+}
+
+export enum TradeStatus {
+  initiated = 'initiated',
+  escrowed = 'escrowed',
+  confirmed = 'confirmed',
+  completed = 'completed',
+  cancelled = 'cancelled',
+  disputed = 'disputed',
+}
+
+export enum DisputeStatus {
+  open = 'open',
+  resolved = 'resolved',
+  closed = 'closed',
+}
+

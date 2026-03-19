@@ -1,7 +1,9 @@
 import request from 'supertest';
 
-import { app, registerAndLogin } from './helpers';
+import { LedgerEntry } from '../src/database/entities/LedgerEntry';
 import { Currency } from '../src/utils/enums';
+
+import { app, registerAndLogin } from './helpers';
 
 describe('Ledger', () => {
   it('returns ledger entries after deposit and ledger rows are immutable (no updates)', async () => {
@@ -27,7 +29,7 @@ describe('Ledger', () => {
     expect(list.body.data.entries.length).toBeGreaterThan(0);
 
     // Immutability: attempt to modify is not exposed; verify the ledger row still matches reference.
-    const entry = list.body.data.entries.find((e: any) => e.reference === reference);
+    const entry = list.body.data.entries.find((e: LedgerEntry) => e.reference === reference);
     expect(entry).toBeTruthy();
     expect(entry.user_id).toBe(userId);
     expect(entry.balance_before).toBe('0.00');

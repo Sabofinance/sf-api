@@ -1,7 +1,9 @@
 import request from 'supertest';
 
-import { app } from './helpers';
+import { ExchangeRate } from '../src/database/entities/ExchangeRate'
 import { withTransaction } from '../src/database/transaction';
+
+import { app } from './helpers';;
 
 describe('Exchange Rates', () => {
   it('returns latest rate per pair', async () => {
@@ -19,9 +21,9 @@ describe('Exchange Rates', () => {
 
     const res = await request(app).get('/rates');
     expect(res.status).toBe(200);
-    const rates = res.body.data.rates as any[];
+    const rates = res.body.data.rates as ExchangeRate[];
     const usd = rates.find((r) => r.pair === 'NGN/USD');
-    expect(usd.rate).toBe('0.001200');
+    expect(usd!.rate).toBe('0.001200');
   });
 });
 

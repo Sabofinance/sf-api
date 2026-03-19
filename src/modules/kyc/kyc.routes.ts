@@ -3,6 +3,7 @@ import multer from 'multer';
 
 import { authMiddleware } from '../../middleware/authMiddleware';
 import { asyncHandler } from '../../utils/asyncHandler';
+
 import { getKycStatus, uploadKyc } from './kyc.controller';
 
 export const kycRouter = Router();

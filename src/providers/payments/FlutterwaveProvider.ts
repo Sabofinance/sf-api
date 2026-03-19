@@ -2,6 +2,7 @@ import crypto from 'crypto';
 
 import { env } from '../../config/env';
 import { AppError } from '../../utils/errors';
+
 import type { InitiateDepositInput, InitiateDepositResult, PaymentProvider, WebhookResult } from './PaymentProvider';
 
 export class FlutterwaveProvider implements PaymentProvider {

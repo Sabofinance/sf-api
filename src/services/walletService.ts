@@ -3,6 +3,7 @@ import { QueryRunner } from 'typeorm';
 
 import { Currency, LedgerType } from '../utils/enums';
 import { AppError, NotFoundError } from '../utils/errors';
+
 import { nextReference } from './referenceService';
 
 type Money = string;
@@ -111,7 +112,7 @@ export class WalletService {
         userId,
         wallet.id,
         params.type,
-        amount.toFixed(2),
+        amount.negated().toFixed(2), // Debits are negative
         currency,
         before.toFixed(2),
         after.toFixed(2),
@@ -123,10 +124,20 @@ export class WalletService {
     return { walletId: wallet.id, balance_before: before.toFixed(2), balance_after: after.toFixed(2), reference };
   }
 
-  async lock(params: { queryRunner: QueryRunner; userId: string; currency: Currency; amount: Money }) {
+  async lock(params: {
+    queryRunner: QueryRunner;
+    userId: string;
+    currency: Currency;
+    amount: Money;
+    type: LedgerType;
+    initiatedBy: string;
+    relatedId?: string | null;
+    reference?: string;
+  }) {
+    const { queryRunner, userId, currency, type, initiatedBy, relatedId } = params;
     const amount = asDecimal(params.amount);
     assertNonNegative(amount, 'INVALID_AMOUNT');
-    const wallet = await this.getWalletForUpdate(params.queryRunner, params.userId, params.currency);
+    const wallet = await this.getWalletForUpdate(queryRunner, userId, currency);
 
     const available = asDecimal(wallet.balance);
     if (available.lt(amount)) throw new AppError('INSUFFICIENT_FUNDS', 'Insufficient available balance', 400);
@@ -134,16 +145,51 @@ export class WalletService {
     const newAvailable = available.minus(amount);
     const newLocked = asDecimal(wallet.locked_balance).plus(amount);
 
-    await params.queryRunner.query(
+    await queryRunner.query(
       `UPDATE "wallets" SET "balance" = $1, "locked_balance" = $2, "updated_at" = now() WHERE "id" = $3`,
       [newAvailable.toFixed(2), newLocked.toFixed(2), wallet.id],
     );
+
+    const reference = params.reference ?? (await nextReference(queryRunner, 'TXN'));
+
+    await queryRunner.query(
+      `
+      INSERT INTO "ledger" (
+        "id","reference","user_id","wallet_id","type","amount","currency",
+        "balance_before","balance_after","initiated_by","related_id","status","created_at"
+      ) VALUES (
+        gen_random_uuid(), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'locked', now()
+      )
+    `,
+      [
+        reference,
+        userId,
+        wallet.id,
+        type,
+        amount.toFixed(2),
+        currency,
+        available.toFixed(2),
+        newAvailable.toFixed(2),
+        initiatedBy,
+        relatedId ?? null,
+      ],
+    );
   }
 
-  async unlock(params: { queryRunner: QueryRunner; userId: string; currency: Currency; amount: Money }) {
+  async unlock(params: {
+    queryRunner: QueryRunner;
+    userId: string;
+    currency: Currency;
+    amount: Money;
+    type: LedgerType;
+    initiatedBy: string;
+    relatedId?: string | null;
+    reference?: string;
+  }) {
+    const { queryRunner, userId, currency, type, initiatedBy, relatedId } = params;
     const amount = asDecimal(params.amount);
     assertNonNegative(amount, 'INVALID_AMOUNT');
-    const wallet = await this.getWalletForUpdate(params.queryRunner, params.userId, params.currency);
+    const wallet = await this.getWalletForUpdate(queryRunner, userId, currency);
 
     const locked = asDecimal(wallet.locked_balance);
     if (locked.lt(amount)) throw new AppError('INSUFFICIENT_LOCKED', 'Insufficient locked balance', 400);
@@ -151,9 +197,34 @@ export class WalletService {
     const newLocked = locked.minus(amount);
     const newAvailable = asDecimal(wallet.balance).plus(amount);
 
-    await params.queryRunner.query(
+    await queryRunner.query(
       `UPDATE "wallets" SET "balance" = $1, "locked_balance" = $2, "updated_at" = now() WHERE "id" = $3`,
       [newAvailable.toFixed(2), newLocked.toFixed(2), wallet.id],
+    );
+
+    const reference = params.reference ?? (await nextReference(queryRunner, 'TXN'));
+
+    await queryRunner.query(
+      `
+      INSERT INTO "ledger" (
+        "id","reference","user_id","wallet_id","type","amount","currency",
+        "balance_before","balance_after","initiated_by","related_id","status","created_at"
+      ) VALUES (
+        gen_random_uuid(), $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'unlocked', now()
+      )
+    `,
+      [
+        reference,
+        userId,
+        wallet.id,
+        type,
+        amount.toFixed(2),
+        currency,
+        asDecimal(wallet.balance).toFixed(2),
+        newAvailable.toFixed(2),
+        initiatedBy,
+        relatedId ?? null,
+      ],
     );
   }
 
@@ -170,6 +241,7 @@ export class WalletService {
     assertNonNegative(amount, 'INVALID_AMOUNT');
 
     const reference = await nextReference(params.queryRunner, 'TXN');
+
     await this.debit({
       queryRunner: params.queryRunner,
       userId: params.fromUserId,
@@ -178,8 +250,9 @@ export class WalletService {
       type: LedgerType.trade_debit,
       initiatedBy: params.initiatedBy,
       relatedId: params.relatedId ?? null,
-      reference,
+      reference: `${reference}-DR`,
     });
+
     await this.credit({
       queryRunner: params.queryRunner,
       userId: params.toUserId,
@@ -188,16 +261,17 @@ export class WalletService {
       type: LedgerType.trade_credit,
       initiatedBy: params.initiatedBy,
       relatedId: params.relatedId ?? null,
-      reference,
+      reference: `${reference}-CR`,
     });
+
     return reference;
   }
 
   private async getWalletForUpdate(queryRunner: QueryRunner, userId: string, currency: Currency) {
     const rows = (await queryRunner.query(
-      `SELECT "id","balance","locked_balance" FROM "wallets" WHERE "user_id" = $1 AND "currency" = $2 FOR UPDATE`,
+      `SELECT "id","balance","locked_balance", "escrow_balance" FROM "wallets" WHERE "user_id" = $1 AND "currency" = $2 FOR UPDATE`,
       [userId, currency],
-    )) as Array<{ id: string; balance: string; locked_balance: string }>;
+    )) as Array<{ id: string; balance: string; locked_balance: string; escrow_balance: string }>;
     const wallet = rows[0];
     if (!wallet) throw new NotFoundError('Wallet not found');
     return wallet;

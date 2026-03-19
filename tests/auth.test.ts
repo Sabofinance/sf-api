@@ -1,8 +1,9 @@
-import request from 'supertest';
 import bcrypt from 'bcrypt';
+import request from 'supertest';
+
+import { withTransaction } from '../src/database/transaction';
 
 import { app, registerAndLogin } from './helpers';
-import { withTransaction } from '../src/database/transaction';
 
 describe('Auth', () => {
   it('registers a user, hashes password, and returns JWT tokens', async () => {

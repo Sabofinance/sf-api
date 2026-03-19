@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KYC Status Update – Sabo Finance</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
+    <style>
+         :root {
+            --dark: #0a1e28;
+            --lime: #c8f032;
+            --white: #ffffff;
+            --off: #f4f6f2;
+            --border: #e4e8df;
+            --muted: #6b7a5e;
+        }
+        
+        body {
+            background-color: var(--off);
+            font-family: 'DM Sans', sans-serif;
+        }
+        
+        .email-wrapper {
+            max-width: 600px;
+            margin: 48px auto;
+            padding: 0 16px;
+        }
+        
+        .card {
+            background: var(--white);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .card-header {
+            background: var(--dark);
+            padding: 32px 44px;
+            text-align: center;
+        }
+        
+        .card-title {
+            font-family: 'DM Serif Display', serif;
+            font-size: 32px;
+            color: #f0f4ee;
+        }
+        
+        .card-body {
+            padding: 40px 44px;
+        }
+        
+        .greeting {
+            font-size: 14.5px;
+            color: #3d4d38;
+            margin-bottom: 32px;
+            line-height: 1.7;
+        }
+        
+        .status-box {
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+        
+        .status-box.approved {
+            background-color: #e6f4ea;
+            border: 1px solid #b2d8c4;
+        }
+        
+        .status-box.rejected {
+            background-color: #fce8e6;
+            border: 1px solid #f4c7c3;
+        }
+        
+        .card-footer {
+            border-top: 1px solid var(--border);
+            padding: 22px 44px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="email-wrapper">
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">KYC Status Update</div>
+            </div>
+            <div class="card-body">
+                <div class="greeting">
+                    Hello <strong>{{name}}</strong>, your KYC status has been updated.
+                </div>
+                <div class="status-box {{statusClass}}">
+                    <strong>Status:</strong> {{status}}
+                    <br/>
+                    <p>{{message}}</p>
+                </div>
+            </div>
+            <div class="card-footer">
+                &copy; 2026 Sabo Finance. All rights reserved.
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
