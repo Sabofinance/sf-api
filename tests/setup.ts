@@ -14,10 +14,8 @@ beforeAll(async () => {
   if (!process.env.DATABASE_URL_TEST) {
     throw new Error('DATABASE_URL_TEST is required for integration tests');
   }
-  process.env.DATABASE_URL = process.env.DATABASE_URL_TEST;
 
   await AppDataSource.initialize();
-  await AppDataSource.runMigrations();
 });
 
 afterEach(async () => {

@@ -1,170 +1,130 @@
-import nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
-import type SMTPPool from 'nodemailer/lib/smtp-pool';
 import fs from 'fs/promises';
 import path from 'path';
+
+import nodemailer from 'nodemailer';
+
 import { env } from '../config/env';
 
-// ────────────────────────────────────────────────
-// Helper: secure flag for common SMTP ports
+// Helper to determine secure flag based on common SMTP ports
 // 465 → implicit TLS (secure: true)
-// 587 → STARTTLS (secure: false)
-// 25  → plain (avoid)
-// others → false
-// ────────────────────────────────────────────────
+// 587 → STARTTLS (secure: false, upgrades later)
+// 25  → usually plain (but avoid if possible)
+// Everything else → assume false + explicit tls options if needed
 function getSecureFlag(port: number | string): boolean {
   const portNum = Number(port);
-  return !isNaN(portNum) && portNum === 465;
+  if (isNaN(portNum)) return false;
+  return portNum === 465; // true only for 465, false for 587/25/others
 }
 
-// ────────────────────────────────────────────────
-// Defaults & config check
-// ────────────────────────────────────────────────
-const smtpPort = Number(env.SMTP_PORT) || 587;
-const isSmtpConfigured =
-  env.EMAIL_ENABLED && Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
+const smtpPort = env.SMTP_PORT || 587; // fallback to most common secure submission port
 
-let transporter: Transporter<SMTPPool.SentMessageInfo> | null = null;
+const isSmtpConfigured = env.EMAIL_ENABLED && !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
 
-// ────────────────────────────────────────────────
-// Initialize transporter (only if fully configured)
-// ────────────────────────────────────────────────
+let transporter: nodemailer.Transporter | null = null;
+
 if (isSmtpConfigured) {
   transporter = nodemailer.createTransport({
     host: env.SMTP_HOST,
-    port: smtpPort,
-    secure: getSecureFlag(smtpPort),
+    port: Number(smtpPort), // ensure it's a number
+    secure: getSecureFlag(smtpPort), // true for 465, false otherwise
 
     auth: {
       user: env.SMTP_USER,
       pass: env.SMTP_PASS,
     },
+    // Good defaults for reliability
+    pool: true, // reuse connections (great for multiple emails)
+    maxMessages: 100, // prevent overload
+    rateDelta: 1000, // 1 message/sec max (adjust as needed)
+    // Add timeouts to prevent ETIMEDOUT from hanging the app
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
+  });
 
-    // Pooling (performance + reliability)
-    pool: true,
-    maxMessages: 100,
-    maxConnections: 5,
-    rateDelta: 1000,
-
-    // Prevent indefinite hangs (critical on some networks)
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
-
-    // Modern TLS (most servers require ≥ TLS 1.2 now)
-    tls: {
-      minVersion: 'TLSv1.2',
-      // rejectUnauthorized: false,   // ← only temporarily for self-signed/internal servers
-    },
-
-    // Uncomment during debugging (very helpful)
-    // logger: true,
-    // debug: true,
-  }) as Transporter<SMTPPool.SentMessageInfo>;
-
-  // Verify at startup (logs once — doesn't crash app)
-  (async () => {
-    try {
-      await transporter.verify();
-      console.log(`SMTP ready → ${env.SMTP_HOST}:${smtpPort} (secure: ${getSecureFlag(smtpPort)})`);
-    } catch (err: any) {
-      console.error('SMTP verification failed:');
-      console.error('   Error:', err.message || err);
-      console.error('\nCommon causes:');
-      console.error('  • Wrong port/secure combo (try 465 + secure:true)');
-      console.error('  • Firewall / hosting blocks SMTP (common on Windows too)');
-      console.error('  • Gmail needs App Password (not regular password)');
-      console.error('  • Self-signed cert → temporarily disable rejectUnauthorized');
-    }
-  })();
+  // Verify connection once at startup (optional but very useful)
+  if (process.env.NODE_ENV !== 'test') {
+    (async () => {
+      try {
+        await transporter?.verify();
+        console.log('SMTP transporter is ready to send emails');
+      } catch (error) {
+        console.error('SMTP connection verification failed:', error);
+        // In production: notify admin, don't crash the whole app
+      }
+    })();
+  }
 } else if (env.EMAIL_ENABLED) {
-  console.warn('EMAIL_ENABLED=true but SMTP config incomplete → emails will be logged only');
+  console.warn(
+    'EMAIL_ENABLED is true, but SMTP configuration is missing (SMTP_HOST, SMTP_USER, SMTP_PASS). Emails will be logged to the console.',
+  );
 } else {
-  console.log('EMAIL_ENABLED=false → all emails mocked to console');
+  console.log(
+    'EMAIL_ENABLED is false. Emails will be logged to the console instead of being sent.',
+  );
 }
 
-// ────────────────────────────────────────────────
-// Email options interface
-// ────────────────────────────────────────────────
 interface EmailOptions {
-  to: string | string[];
+  to: string | string[]; // support single or multiple recipients
   subject: string;
-  text?: string;
-  html?: string;
+  text?: string; // optional if only html
+  html?: string; // optional if only text
   template?: string;
-  context?: Record<string, any>;
-  cc?: string | string[];
-  bcc?: string | string[];
-  // attachments?: nodemailer.Attachment[];
+  context?: Record<string, string>;
+  // You can easily extend later: cc, bcc, attachments, replyTo, etc.
 }
 
-// ────────────────────────────────────────────────
-// Main send function
-// ────────────────────────────────────────────────
-export async function sendEmail(
-  options: EmailOptions,
-): Promise<{ messageId: string; sent: boolean }> {
+export async function sendEmail(options: EmailOptions): Promise<{ messageId: string }> {
+  if (process.env.NODE_ENV === 'test') {
+    console.log(`[TEST MODE] Email suppressed: TO=${options.to}, SUBJECT=${options.subject}`);
+    return { messageId: 'test-message-id-' + Date.now() };
+  }
+
   let { html, text, template, context } = options;
 
-  // ── Render template if requested ─────────────────────────────
   if (template) {
     const templatePath = path.join(__dirname, '../templates/emails', `${template}.html`);
-
     try {
       let content = await fs.readFile(templatePath, 'utf-8');
       if (context) {
         Object.entries(context).forEach(([key, value]) => {
-          content = content.replace(new RegExp(`{{${key}}}`, 'g'), String(value ?? ''));
+          content = content.replace(new RegExp(`{{${key}}}`, 'g'), value);
         });
       }
       html = content;
-    } catch (err) {
-      console.error(`Template failed to load: ${template}`, err);
-      html = html || '<p>Template could not be loaded.</p>';
+    } catch (error) {
+      console.error(`Failed to load email template: ${template}`, error);
     }
   }
 
-  // ── Mock mode (no real transporter or emails disabled) ────────
-  if (!transporter || !env.EMAIL_ENABLED) {
-    console.log('\n╔════════════════════ EMAIL MOCK ════════════════════╗');
-    console.log(`To:      ${Array.isArray(options.to) ? options.to.join(', ') : options.to}`);
+  if (!transporter) {
+    console.log('\n--- EMAIL MOCK ---');
+    console.log(`To: ${options.to}`);
     console.log(`Subject: ${options.subject}`);
 
-    if (options.cc)
-      console.log(`CC:      ${Array.isArray(options.cc) ? options.cc.join(', ') : options.cc}`);
-    if (options.bcc)
-      console.log(`BCC:     ${Array.isArray(options.bcc) ? options.bcc.join(', ') : options.bcc}`);
-
-    if (context?.otp) console.log(`OTP:          ${context.otp}`);
-    if (context?.resetLink) console.log(`Reset Link:   ${context.resetLink}`);
-    if (context?.name) console.log(`For:          ${context.name}`);
-
-    console.log(`\n${text || (html ? html.substring(0, 300) + '...' : '(no content)')} `);
-    console.log('╚════════════════════════════════════════════════════╝\n');
-
-    return { messageId: `mock-${Date.now()}`, sent: false };
+    // Extract key data for a cleaner console view
+    if (context && (context.otp || context.resetLink)) {
+      if (context.otp) console.log(`OTP: ${context.otp}`);
+      if (context.resetLink) console.log(`Reset Link: ${context.resetLink}`);
+    } else {
+      console.log(`Content: ${text || 'Check templates'}`);
+    }
+    console.log('-------------------\n');
+    return { messageId: 'mock-id-' + Date.now() };
   }
 
-  // ── Real send ─────────────────────────────────────────────────
   try {
     const info = await transporter.sendMail({
-      from: `"Sabo Finance" <${env.SMTP_USER}>`,
-      to: options.to,
-      subject: options.subject,
-      text,
+      from: `"Sabo Finance" <${env.EMAIL_FROM_ADDRESS || env.SMTP_USER}>`, // consistent & safe
+      ...options,
       html,
-      cc: options.cc,
-      bcc: options.bcc,
-      // attachments: options.attachments,
+      text,
     });
 
-    console.log(`Email sent → ID: ${info.messageId}`);
-    return { messageId: info.messageId, sent: true };
-  } catch (err: any) {
-    console.error('Failed to send email:');
-    console.error('   To:', options.to);
-    console.error('   Subject:', options.subject);
-    console.error('   Error:', err.message || err);
-    throw new Error(`Email sending failed: ${err.message || 'Unknown error'}`);
+    console.log('Email sent successfully - Message ID:', info.messageId);
+    return { messageId: info.messageId };
+  } catch (error) {
+    console.error('Failed to send email:', error);
+    throw new Error(`Email sending failed: ${(error as Error).message}`);
   }
 }

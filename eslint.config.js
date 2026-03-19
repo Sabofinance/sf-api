@@ -4,39 +4,37 @@ const importPlugin = require("eslint-plugin-import");
 const eslintConfigPrettier = require("eslint-config-prettier");
 
 /** @type {import("eslint").Linter.FlatConfig[]} */
-module.exports = [
-  {
-    files: ["**/*.ts"],
-    languageOptions: {
-      parser: tsParser,
-      parserOptions: {
-        ecmaVersion: 2022,
-        sourceType: "script",
-        project: "./tsconfig.json",
-      },
+module.exports = [{
+        ignores: ['jest.config.ts', 'dist/**', 'node_modules/**'],
     },
-    plugins: {
-      "@typescript-eslint": tseslint,
-      import: importPlugin,
-    },
-    rules: {
-      ...tseslint.configs.recommended.rules,
-      ...eslintConfigPrettier.rules,
-      "import/order": [
-        "error",
-        {
-          "newlines-between": "always",
-          alphabetize: { order: "asc", caseInsensitive: true },
+    {
+        files: ['**/*.ts'],
+        languageOptions: {
+            parser: tsParser,
+            parserOptions: {
+                ecmaVersion: 2022,
+                sourceType: 'script',
+                project: './tsconfig.json',
+            },
         },
-      ],
-      "@typescript-eslint/no-unused-vars": [
-        "error",
-        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
-      ],
+        plugins: {
+            '@typescript-eslint': tseslint,
+            import: importPlugin,
+        },
+        rules: {
+            ...tseslint.configs.recommended.rules,
+            ...eslintConfigPrettier.rules,
+            'import/order': [
+                'error',
+                {
+                    'newlines-between': 'always',
+                    alphabetize: { order: 'asc', caseInsensitive: true },
+                },
+            ],
+            '@typescript-eslint/no-unused-vars': [
+                'error',
+                { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+            ],
+        },
     },
-  },
-  {
-    ignores: ["dist/**", "node_modules/**"],
-  },
 ];
-

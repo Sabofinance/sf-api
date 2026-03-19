@@ -263,15 +263,7 @@ export function createSwaggerSpec() {
         },
       },
     },
-    apis: [
-        'src/modules/auth/auth.controller.ts',
-        'src/modules/deposits/deposits.controller.ts',
-        'src/modules/exchange-rates/rates.controller.ts',
-        'src/modules/kyc/kyc.controller.ts',
-        'src/modules/ledger/ledger.controller.ts',
-        'src/modules/wallets/wallets.controller.ts',
-        'src/modules/admin/admin.controller.ts',
-      ],
+    apis: ['src/modules/**/*.controller.ts'],
   };
 
   return swaggerJSDoc(options);

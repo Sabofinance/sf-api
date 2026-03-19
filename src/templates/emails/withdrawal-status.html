@@ -34,15 +34,16 @@
         }
         
         .card-header {
-            background: var(--dark);
+            background: linear-gradient(135deg, #0a1e28, #163544);
             padding: 32px 44px;
             text-align: center;
+            border-bottom: 4px solid #c8f032;
         }
         
         .card-title {
             font-family: 'DM Serif Display', serif;
-            font-size: 32px;
-            color: #f0f4ee;
+            font-size: 34px;
+            color: #ffffff;
         }
         
         .card-body {
@@ -71,18 +72,18 @@
         }
         
         .status-box.requested {
-            background-color: #e8f0fe;
-            border: 1px solid #c5d9f8;
+            background-color: #eef8da;
+            border: 1px solid #b8db69;
         }
         
         .status-box.approved {
-            background-color: #e6f4ea;
-            border: 1px solid #b2d8c4;
+            background-color: #e9f7dd;
+            border: 1px solid #9ecb46;
         }
         
         .status-box.failed {
-            background-color: #fce8e6;
-            border: 1px solid #f4c7c3;
+            background-color: #ffecef;
+            border: 1px solid #f2a8b5;
         }
         
         .card-footer {
@@ -109,8 +110,8 @@
                     <p>{{message}}</p>
                 </div>
                 <div class="details">
-                    <p><strong>Amount:</strong> {{amount}} {{currency}}</p>
-                    <p><strong>Reference:</strong> {{reference}}</p>
+                    <p style="background:#f3f8ea;border-left:4px solid #c8f032;padding:10px 12px;border-radius:6px;"><strong>Amount:</strong> {{amount}} {{currency}}</p>
+                    <p style="background:#f3f8ea;border-left:4px solid #c8f032;padding:10px 12px;border-radius:6px;"><strong>Reference:</strong> {{reference}}</p>
                 </div>
             </div>
             <div class="card-footer">
