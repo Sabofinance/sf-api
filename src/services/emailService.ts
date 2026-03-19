@@ -18,7 +18,7 @@ const smtpPort = env.SMTP_PORT || 587; // fallback to most common secure submiss
 
 const isSmtpConfigured = env.EMAIL_ENABLED && !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
 
-let transporter: nodemailer.Transporter | null = null;
+let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
 
 if (isSmtpConfigured) {
   transporter = nodemailer.createTransport({
