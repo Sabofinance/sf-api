@@ -38,7 +38,7 @@ const refreshTokenSchema = z.object({
 
 function signAccessToken(user: { id: string; role: UserRole }) {
   const payload = {
-    sub: user.id,
+    sub: String(user.id),
     role: String(user.role),
   };
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '15m' });
@@ -46,7 +46,7 @@ function signAccessToken(user: { id: string; role: UserRole }) {
 
 function signRefreshToken(user: { id: string; role: UserRole }) {
   const payload = {
-    sub: user.id,
+    sub: String(user.id),
     role: String(user.role),
   };
   return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: '30d' });

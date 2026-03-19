@@ -24,10 +24,12 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
     return next(new UnauthorizedError('Missing Bearer token'));
   }
 
-  const token = header.slice('Bearer '.length);
-
+  // Remove any non-printable control characters or whitespace that might have been 
+  // injected by terminal line-wrapping or clipboard managers.
+  const token = header.slice('Bearer '.length).replace(/[\x00-\x1F\x7F-\x9F]/g, "").trim();
+  
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET ?? '') as { sub: string; role?: 'user' | 'admin' };
+    const payload = jwt.verify(token, env.JWT_SECRET) as { sub: string; role?: 'user' | 'admin' };
     console.log(payload)
     if (!payload?.sub) return next(new UnauthorizedError('Invalid token'));
     req.user = { id: payload.sub, role: payload.role ?? 'user' };

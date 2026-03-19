@@ -1,1 +1,0 @@
-# Docker removed as requested. Connect directly to PG using DATABASE_URL in .env.
