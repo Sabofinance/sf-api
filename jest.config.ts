@@ -7,7 +7,9 @@ const config: Config = {
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
   modulePathIgnorePatterns: ['<rootDir>/dist/'],
   verbose: true,
+  moduleNameMapper: {
+    '^src/database/data-source$': '<rootDir>/src/database/data-source.test.ts',
+  },
 };
 
 export default config;
-

@@ -1,6 +1,8 @@
-import nodemailer from 'nodemailer';
 import fs from 'fs/promises';
 import path from 'path';
+
+import nodemailer from 'nodemailer';
+
 import { env } from '../config/env';
 
 // Helper to determine secure flag based on common SMTP ports
@@ -18,7 +20,7 @@ const smtpPort = env.SMTP_PORT || 587; // fallback to most common secure submiss
 
 const isSmtpConfigured = env.EMAIL_ENABLED && !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
 
-let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
+let transporter: nodemailer.Transporter | null = null;
 
 if (isSmtpConfigured) {
   transporter = nodemailer.createTransport({
@@ -41,15 +43,17 @@ if (isSmtpConfigured) {
   });
 
   // Verify connection once at startup (optional but very useful)
-  (async () => {
-    try {
-      await transporter?.verify();
-      console.log('SMTP transporter is ready to send emails');
-    } catch (error) {
-      console.error('SMTP connection verification failed:', error);
-      // In production: notify admin, don't crash the whole app
-    }
-  })();
+  if (process.env.NODE_ENV !== 'test') {
+    (async () => {
+      try {
+        await transporter?.verify();
+        console.log('SMTP transporter is ready to send emails');
+      } catch (error) {
+        console.error('SMTP connection verification failed:', error);
+        // In production: notify admin, don't crash the whole app
+      }
+    })();
+  }
 } else if (env.EMAIL_ENABLED) {
   console.warn(
     'EMAIL_ENABLED is true, but SMTP configuration is missing (SMTP_HOST, SMTP_USER, SMTP_PASS). Emails will be logged to the console.',
@@ -71,6 +75,11 @@ interface EmailOptions {
 }
 
 export async function sendEmail(options: EmailOptions): Promise<{ messageId: string }> {
+  if (process.env.NODE_ENV === 'test') {
+    console.log(`[TEST MODE] Email suppressed: TO=${options.to}, SUBJECT=${options.subject}`);
+    return { messageId: 'test-message-id-' + Date.now() };
+  }
+
   let { html, text, template, context } = options;
 
   if (template) {
@@ -106,7 +115,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
 
   try {
     const info = await transporter.sendMail({
-      from: `"Sabo Finance" <${env.SMTP_USER}>`, // consistent & safe
+      from: `"Sabo Finance" <${env.EMAIL_FROM_ADDRESS || env.SMTP_USER}>`, // consistent & safe
       ...options,
       html,
       text,

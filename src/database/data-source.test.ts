@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import { DataSource } from 'typeorm';
 
 import { AdminLog } from './entities/AdminLog';
@@ -13,20 +15,17 @@ import { User } from './entities/User';
 import { Wallet } from './entities/Wallet';
 import { Withdrawal } from './entities/Withdrawal';
 
-const isTest = process.env.NODE_ENV === 'test';
-const databaseUrl = isTest ? process.env.DATABASE_URL_TEST : process.env.DATABASE_URL;
-
+const databaseUrl = process.env.DATABASE_URL_TEST;
 if (!databaseUrl) {
-  throw new Error(isTest ? 'DATABASE_URL_TEST is required for testing' : 'DATABASE_URL is required');
+  throw new Error('DATABASE_URL_TEST is required');
 }
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
   url: databaseUrl,
-  logging: process.env.NODE_ENV === 'development',
+  logging: false,
   synchronize: false,
   entities: [User, Wallet, LedgerEntry, Deposit, ExchangeRate, Kyc, AdminLog, Beneficiary, Withdrawal, Sabit, Trade, Dispute],
   migrations: ['src/database/migrations/*.ts'],
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ssl: false,
 });
-
