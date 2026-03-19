@@ -37,17 +37,19 @@ const refreshTokenSchema = z.object({
 });
 
 function signAccessToken(user: { id: string; role: UserRole }) {
-  if (!env.JWT_SECRET) throw new AppError('CONFIG_ERROR', 'JWT_SECRET is required', 500);
-  return jwt.sign({ role: user.role }, env.JWT_SECRET, { subject: user.id, expiresIn: '15m' });
+  const payload = {
+    sub: user.id,
+    role: String(user.role),
+  };
+  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '15m' });
 }
 
 function signRefreshToken(user: { id: string; role: UserRole }) {
-  if (!env.JWT_REFRESH_SECRET)
-    throw new AppError('CONFIG_ERROR', 'JWT_REFRESH_SECRET is required', 500);
-  return jwt.sign({ role: user.role }, env.JWT_REFRESH_SECRET, {
-    subject: user.id,
-    expiresIn: '30d',
-  });
+  const payload = {
+    sub: user.id,
+    role: String(user.role),
+  };
+  return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: '30d' });
 }
 
 /**
@@ -407,14 +409,12 @@ export async function refreshToken(req: Request, res: Response) {
 
   try {
     
-    // Convert to unknown first, then assert type
     if (!env.JWT_REFRESH_SECRET)
       throw new AppError('CONFIG_ERROR', 'JWT_REFRESH_SECRET is required', 500);
-    const payload = jwt.verify(input.refreshToken, env.JWT_REFRESH_SECRET) as unknown as {
+    const payload = jwt.verify(input.refreshToken, env.JWT_REFRESH_SECRET) as {
       sub: string;
       role: UserRole;
     };
-    console.log(payload);
 
     if (!payload.sub || !payload.role) {
       throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token payload is invalid', 401);

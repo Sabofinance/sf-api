@@ -89,11 +89,18 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
   }
 
   if (!transporter) {
-    console.log('--- EMAIL MOCK ---');
+    console.log('\n--- EMAIL MOCK ---');
     console.log(`To: ${options.to}`);
     console.log(`Subject: ${options.subject}`);
-    console.log(`Text: ${text}`);
-    console.log('-------------------');
+    
+    // Extract key data for a cleaner console view
+    if (context && (context.otp || context.resetLink)) {
+      if (context.otp) console.log(`OTP: ${context.otp}`);
+      if (context.resetLink) console.log(`Reset Link: ${context.resetLink}`);
+    } else {
+      console.log(`Content: ${text || 'Check templates'}`);
+    }
+    console.log('-------------------\n');
     return { messageId: 'mock-id-' + Date.now() };
   }
 

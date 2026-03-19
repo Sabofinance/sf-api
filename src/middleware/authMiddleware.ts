@@ -25,12 +25,15 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
   }
 
   const token = header.slice('Bearer '.length);
+
   try {
     const payload = jwt.verify(token, env.JWT_SECRET ?? '') as { sub: string; role?: 'user' | 'admin' };
+    console.log(payload)
     if (!payload?.sub) return next(new UnauthorizedError('Invalid token'));
     req.user = { id: payload.sub, role: payload.role ?? 'user' };
     return next();
-  } catch {
+  } catch (err) {
+    console.log('JWT Verification Error:', err);
     return next(new UnauthorizedError('Invalid token'));
   }
 }
