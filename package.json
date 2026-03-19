@@ -11,7 +11,7 @@
         "migration:generate": "npm run typeorm -- migration:generate",
         "migration:run": "npm run typeorm -- migration:run",
         "migration:run:test": "npm run typeorm:test -- migration:run",
-        "migration:run:prod": "node -r dotenv/config ./node_modules/typeorm/cli.js -d dist/database/data-source.js migration:run",
+        "migration:run:prod": "node ./node_modules/typeorm/cli.js -d dist/database/data-source.js migration:run",
         "migration:revert": "npm run typeorm -- migration:revert",
         "test": "NODE_ENV=test node -r ts-node/register -r dotenv/config ./node_modules/jest/bin/jest.js --runInBand"
     },
