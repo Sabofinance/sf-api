@@ -6,9 +6,10 @@ import { Kyc } from '../../database/entities/Kyc';
 import { User } from '../../database/entities/User';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
+import { NotificationService } from '../../services/notificationService';
 import { WalletService } from '../../services/walletService';
 import { ok } from '../../utils/apiResponse';
-import { DepositStatus, KycStatus, LedgerType } from '../../utils/enums';
+import { DepositStatus, KycStatus, LedgerType, NotificationType } from '../../utils/enums';
 import { AppError, NotFoundError } from '../../utils/errors';
 
 const idSchema = z.object({ id: z.string().uuid() });
@@ -106,6 +107,15 @@ export async function suspendUser(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
   await withTransaction(async (qr) => {
     await qr.query(`UPDATE "users" SET "is_suspended" = true WHERE "id" = $1`, [id]);
+    
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: id,
+      title: 'Account Suspended',
+      message: 'Your account has been suspended. Please contact support.',
+      type: NotificationType.error,
+    });
   });
   return ok(res, { message: 'User suspended successfully' });
 }
@@ -133,6 +143,15 @@ export async function reinstateUser(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
   await withTransaction(async (qr) => {
     await qr.query(`UPDATE "users" SET "is_suspended" = false WHERE "id" = $1`, [id]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: id,
+      title: 'Account Reinstated',
+      message: 'Your account has been reinstated. You can now use the platform.',
+      type: NotificationType.success,
+    });
   });
   return ok(res, { message: 'User reinstated successfully' });
 }
@@ -202,6 +221,16 @@ export async function approveKyc(req: Request, res: Response) {
     ]);
     await qr.query(`UPDATE "users" SET "kyc_status" = $1 WHERE "id" = $2`, [KycStatus.verified, kyc.user_id]);
 
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: kyc.user_id,
+      title: 'KYC Approved',
+      message: 'Your KYC documents have been approved. You now have full access to the platform.',
+      type: NotificationType.success,
+      relatedId: id,
+    });
+
     const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [kyc.user_id])) as User[];
     await sendEmail({
       to: user[0].email,
@@ -262,6 +291,16 @@ export async function rejectKyc(req: Request, res: Response) {
       id,
     ]);
     await qr.query(`UPDATE "users" SET "kyc_status" = $1 WHERE "id" = $2`, [KycStatus.rejected, kyc.user_id]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: kyc.user_id,
+      title: 'KYC Rejected',
+      message: `Your KYC submission was rejected: ${reason}`,
+      type: NotificationType.error,
+      relatedId: id,
+    });
 
     const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [kyc.user_id])) as User[];
     await sendEmail({
@@ -330,6 +369,16 @@ export async function approveDeposit(req: Request, res: Response) {
       dep.id,
     ]);
 
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: dep.user_id,
+      title: 'Deposit Confirmed',
+      message: `Your manual deposit of ${dep.amount} ${dep.currency} has been approved and credited.`,
+      type: NotificationType.success,
+      relatedId: dep.id,
+    });
+
     const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [dep.id])) as Deposit[];
 
     const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [dep.user_id])) as User[];
@@ -386,6 +435,17 @@ export async function rejectDeposit(req: Request, res: Response) {
       req.user!.id,
       dep.id,
     ]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: dep.user_id,
+      title: 'Deposit Rejected',
+      message: `Your manual deposit of ${dep.amount} ${dep.currency} has been rejected.`,
+      type: NotificationType.error,
+      relatedId: dep.id,
+    });
+
     const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [dep.id])) as Deposit[];
     return updated[0];
   });

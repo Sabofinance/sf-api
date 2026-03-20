@@ -7,10 +7,11 @@ import { User } from '../../database/entities/User';
 import { withTransaction } from '../../database/transaction';
 import { FlutterwaveProvider } from '../../providers/payments/FlutterwaveProvider';
 import { sendEmail } from '../../services/emailService';
+import { NotificationService } from '../../services/notificationService';
 import { nextReference } from '../../services/referenceService';
 import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
-import { Currency, DepositStatus, LedgerType } from '../../utils/enums';
+import { Currency, DepositStatus, LedgerType, NotificationType } from '../../utils/enums';
 import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 
 const initiateNgnSchema = z.object({
@@ -71,6 +72,17 @@ export async function initiateNgnDeposit(req: Request, res: Response) {
       init.provider_reference ?? null,
       dep.id,
     ]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: req.user!.id,
+      title: 'Deposit Initiated',
+      message: `Your deposit of ${input.amount} ${Currency.NGN} has been initiated.`,
+      type: NotificationType.info,
+      relatedId: dep.id,
+    });
+
     return { ...dep, provider_reference: init.provider_reference ?? null, payment_link: init.payment_link ?? null };
   });
 
@@ -143,6 +155,16 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
         String(data?.id ?? dep.provider_reference ?? dep.reference),
         dep.id,
       ]);
+
+      const notificationService = new NotificationService();
+      await notificationService.createNotification({
+        queryRunner: qr,
+        userId: dep.user_id,
+        title: 'Deposit Confirmed',
+        message: `Your deposit of ${dep.amount} ${dep.currency} has been successfully credited to your wallet.`,
+        type: NotificationType.success,
+        relatedId: dep.id,
+      });
 
       const userRows = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [dep.user_id])) as User[];
       if (userRows.length > 0 && userRows[0].email) {
@@ -278,6 +300,17 @@ export async function submitForeignDeposit(req: Request, res: Response) {
        RETURNING *`,
       [reference, req.user!.id, input.currency, input.amount, uploaded.secure_url, DepositStatus.pending_review],
     )) as Array<Record<string, unknown>>;
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: req.user!.id,
+      title: 'Deposit Submitted',
+      message: `Your manual deposit of ${input.amount} ${input.currency} has been submitted for review.`,
+      type: NotificationType.info,
+      relatedId: rows[0].id as string,
+    });
+
     return rows[0];
   });
 

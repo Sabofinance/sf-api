@@ -12,6 +12,8 @@ import { Trade } from './entities/Trade';
 import { User } from './entities/User';
 import { Wallet } from './entities/Wallet';
 import { Withdrawal } from './entities/Withdrawal';
+import { Notifications } from './entities/Notifications';
+
 
 const isTest = process.env.NODE_ENV === 'test';
 const databaseUrl = isTest ? process.env.DATABASE_URL_TEST : process.env.DATABASE_URL;
@@ -28,13 +30,24 @@ export const AppDataSource = new DataSource({
   logging: process.env.NODE_ENV === 'development',
   synchronize: false,
   entities: [
-    User, Wallet, LedgerEntry, Deposit, ExchangeRate,
-    Kyc, AdminLog, Beneficiary, Withdrawal, Sabit, Trade, Dispute
+    User,
+    Wallet,
+    LedgerEntry,
+    Deposit,
+    ExchangeRate,
+    Kyc,
+    AdminLog,
+    Beneficiary,
+    Withdrawal,
+    Sabit,
+    Trade,
+    Dispute,
+    Notifications,
   ],
   migrations: [
     process.env.NODE_ENV === 'production'
       ? 'dist/database/migrations/*.js'
-      : 'src/database/migrations/*.ts'
+      : 'src/database/migrations/*.ts',
   ],
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });

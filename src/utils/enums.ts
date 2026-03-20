@@ -71,3 +71,15 @@ export enum DisputeStatus {
   closed = 'closed',
 }
 
+export enum NotificationStatus {
+  unread = 'unread',
+  read = 'read',
+}
+
+export enum NotificationType {
+  info = 'info',
+  success = 'success',
+  warning = 'warning',
+  error = 'error',
+}
+

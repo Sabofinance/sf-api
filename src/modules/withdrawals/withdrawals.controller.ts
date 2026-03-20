@@ -5,10 +5,11 @@ import { Beneficiary } from '../../database/entities/Beneficiary';
 import { Withdrawal } from '../../database/entities/Withdrawal';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
+import { NotificationService } from '../../services/notificationService';
 import { nextReference } from '../../services/referenceService';
 import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
-import { LedgerType } from '../../utils/enums';
+import { LedgerType, NotificationType } from '../../utils/enums';
 import { NotFoundError, UnauthorizedError } from '../../utils/errors';
 
 const requestSchema = z.object({
@@ -77,6 +78,16 @@ export async function requestWithdrawal(req: Request, res: Response) {
        RETURNING *`,
       [reference, req.user!.id, beneficiary.id, beneficiary.currency, input.amount],
     )) as Withdrawal[];
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: req.user!.id,
+      title: 'Withdrawal Requested',
+      message: `Your withdrawal request of ${input.amount} ${beneficiary.currency} has been received.`,
+      type: NotificationType.info,
+      relatedId: withdrawalRows[0].id,
+    });
 
     await sendEmail({
       to: req.user!.email,

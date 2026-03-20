@@ -13,6 +13,8 @@ import { sabitsRouter } from './modules/sabits/sabits.routes';
 import { tradesRouter } from './modules/trades/trades.routes';
 import { walletsRouter } from './modules/wallets/wallets.routes';
 import { withdrawalsRouter } from './modules/withdrawals/withdrawals.routes';
+import { notificationsRouter } from './modules/notifications';
+
 
 export const apiRouter = Router();
 
@@ -30,4 +32,5 @@ apiRouter.use('/sabits', sabitsRouter);
 apiRouter.use('/trades', tradesRouter);
 apiRouter.use('/conversions', conversionsRouter);
 apiRouter.use('/disputes', disputesRouter);
+apiRouter.use('/notifications', notificationsRouter);
 

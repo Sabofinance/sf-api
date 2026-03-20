@@ -8,8 +8,9 @@ import { z } from 'zod';
 import { env } from '../../config/env';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
+import { NotificationService } from '../../services/notificationService';
 import { created, ok } from '../../utils/apiResponse';
-import { Currency, UserRole } from '../../utils/enums';
+import { Currency, UserRole, NotificationType } from '../../utils/enums';
 import { AppError, UnauthorizedError } from '../../utils/errors';
 
 const registerSchema = z.object({
@@ -98,6 +99,15 @@ export async function register(req: Request, res: Response) {
         [user.id, currency],
       );
     }
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: user.id,
+      title: 'Welcome to Sabo Finance',
+      message: 'Your account has been successfully created. Please verify your email to get started.',
+      type: NotificationType.success,
+    });
 
     return rows[0];
   });
@@ -266,6 +276,57 @@ export async function logout(_req: Request, res: Response) {
 
 /**
  * @swagger
+ * /auth/me:
+ *   get:
+ *     summary: Get currently authenticated user profile
+ *     tags: [Auth]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiErrorEnvelope" }
+ */
+export async function getMe(req: Request, res: Response) {
+  if (!req.user) throw new UnauthorizedError();
+
+  const user = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT 
+         "id", 
+         "name", 
+         "email", 
+         "phone", 
+         "email_verified", 
+         "phone_verified", 
+         "kyc_status", 
+         "role", 
+         "is_suspended", 
+         "created_at" 
+       FROM "users" 
+       WHERE "id" = $1 
+       LIMIT 1`,
+      [req.user!.id],
+    )) as Array<Record<string, unknown>>;
+
+    return rows[0];
+  });
+
+  if (!user) {
+    throw new UnauthorizedError('User not found');
+  }
+
+  return ok(res, { user });
+}
+
+/**
+ * @swagger
  * /auth/forgot-password:
  *   post:
  *     summary: Forgot password
@@ -374,6 +435,15 @@ export async function resetPassword(req: Request, res: Response) {
       'UPDATE "users" SET "password_hash" = $1, "password_reset_token" = NULL, "password_reset_expires" = NULL WHERE "id" = $2',
       [password_hash, user.id,
     ]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: user.id,
+      title: 'Password Changed',
+      message: 'Your password has been successfully changed.',
+      type: NotificationType.warning,
+    });
 
     await sendEmail({
       to: user.email,

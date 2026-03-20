@@ -8,10 +8,11 @@ import { Trade } from '../../database/entities/Trade';
 import { User } from '../../database/entities/User';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
+import { NotificationService } from '../../services/notificationService';
 import { nextReference } from '../../services/referenceService';
 import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
-import { Currency, LedgerType, SabitType, TradeStatus } from '../../utils/enums';
+import { Currency, LedgerType, SabitType, TradeStatus, NotificationType } from '../../utils/enums';
 import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 
 const initiateSchema = z.object({
@@ -85,7 +86,28 @@ export async function initiateTrade(req: Request, res: Response) {
       [sabit.id, buyerId, sellerId, sabit.currency, input.amount, sabit.rate_ngn, totalNgn.toFixed(2), reference],
     )) as Trade[];
 
-    return tradeRows[0];
+    const notificationService = new NotificationService();
+    const trade = tradeRows[0];
+    
+    // Notify both buyer and seller
+    await notificationService.createNotification({
+        queryRunner: qr,
+        userId: trade.buyer_id,
+        title: 'Trade Initiated',
+        message: `A trade for ${trade.amount} ${trade.currency} has been initiated.`,
+        type: NotificationType.info,
+        relatedId: trade.id,
+    });
+    await notificationService.createNotification({
+        queryRunner: qr,
+        userId: trade.seller_id,
+        title: 'New Trade Request',
+        message: `You have a new trade request for ${trade.amount} ${trade.currency}.`,
+        type: NotificationType.info,
+        relatedId: trade.id,
+    });
+
+    return trade;
   });
 
   return created(res, { trade });
@@ -148,6 +170,16 @@ export async function confirmTrade(req: Request, res: Response) {
     // For simplicity in this phase, we'll just update the status.
 
     await qr.query(`UPDATE "trades" SET "status" = $1 WHERE "id" = $2`, [TradeStatus.escrowed, id]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+        queryRunner: qr,
+        userId: trade.buyer_id,
+        title: 'Trade Escrowed',
+        message: `The seller has confirmed the trade for ${trade.amount} ${trade.currency}. Funds are now in escrow.`,
+        type: NotificationType.success,
+        relatedId: trade.id,
+    });
   });
 
   return ok(res, { message: 'Trade confirmed and funds are in escrow' });
@@ -246,6 +278,24 @@ export async function completeTrade(req: Request, res: Response) {
       TradeStatus.completed,
       id,
     ]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+        queryRunner: qr,
+        userId: trade.buyer_id,
+        title: 'Trade Completed',
+        message: `The trade for ${trade.amount} ${trade.currency} has been completed and settled.`,
+        type: NotificationType.success,
+        relatedId: trade.id,
+    });
+    await notificationService.createNotification({
+        queryRunner: qr,
+        userId: trade.seller_id,
+        title: 'Trade Completed',
+        message: `The trade for ${trade.amount} ${trade.currency} has been completed and settled.`,
+        type: NotificationType.success,
+        relatedId: trade.id,
+    });
 
     // Notify both parties
     const buyer = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [trade.buyer_id])) as User[];

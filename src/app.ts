@@ -2,13 +2,21 @@ import 'reflect-metadata';
 
 import express, { type Request, type Response } from 'express';
 import swaggerUi from 'swagger-ui-express';
+import cors from 'cors';
 
+
+import { env } from './config/env';
 import { createSwaggerSpec } from './docs/swagger';
 import { errorHandler } from './middleware/errorHandler';
 import { apiRouter } from './routes';
 
 export function createApp() {
   const app = express();
+
+  app.use(cors({
+    origin: env.CORS_ORIGIN.split(','),
+    credentials: true,
+  }));
 
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));

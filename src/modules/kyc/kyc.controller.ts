@@ -3,8 +3,9 @@ import { z } from 'zod';
 
 import { cloudinary } from '../../config/cloudinary';
 import { withTransaction } from '../../database/transaction';
+import { NotificationService } from '../../services/notificationService';
 import { created, ok } from '../../utils/apiResponse';
-import { KycStatus } from '../../utils/enums';
+import { KycStatus, NotificationType } from '../../utils/enums';
 import { AppError, UnauthorizedError } from '../../utils/errors';
 
 const uploadSchema = z.object({
@@ -69,6 +70,17 @@ export async function uploadKyc(req: Request, res: Response) {
     )) as Array<Record<string, unknown>>;
 
     await qr.query(`UPDATE "users" SET "kyc_status" = $1 WHERE "id" = $2`, [KycStatus.pending, req.user!.id]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: req.user!.id,
+      title: 'KYC Submitted',
+      message: 'Your KYC documents have been successfully uploaded and are now pending review.',
+      type: NotificationType.info,
+      relatedId: rows[0].id as string,
+    });
+
     return rows[0];
   });
 
