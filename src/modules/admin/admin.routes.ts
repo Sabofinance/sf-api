@@ -5,6 +5,8 @@ import { authMiddleware } from '../../middleware/authMiddleware';
 import { asyncHandler } from '../../utils/asyncHandler';
 
 import {
+  adminLogin,
+  adminVerifyOtp,
   approveDeposit,
   rejectDeposit,
   listUsers,
@@ -14,10 +16,19 @@ import {
   listKycSubmissions,
   approveKyc,
   rejectKyc,
+  getDashboardStats,
+  listAllDeposits,
+  listAllDisputes,
+  listAllTransactions,
 } from './admin.controller';
 
 export const adminRouter = Router();
 
+// Public Admin Auth
+adminRouter.post('/auth/login', asyncHandler(adminLogin));
+adminRouter.post('/auth/verify-otp', asyncHandler(adminVerifyOtp));
+
+// Protected Admin Routes
 adminRouter.use(authMiddleware, adminMiddleware);
 
 // User Management
@@ -34,4 +45,10 @@ adminRouter.post('/kyc/:id/reject', asyncHandler(rejectKyc));
 // Deposit Management
 adminRouter.post('/deposits/:id/approve', asyncHandler(approveDeposit));
 adminRouter.post('/deposits/:id/reject', asyncHandler(rejectDeposit));
+
+// Dashboard
+adminRouter.get('/dashboard', asyncHandler(getDashboardStats));
+adminRouter.get('/deposits', asyncHandler(listAllDeposits));
+adminRouter.get('/disputes', asyncHandler(listAllDisputes));
+adminRouter.get('/transactions', asyncHandler(listAllTransactions));
 

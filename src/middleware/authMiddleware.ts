@@ -3,12 +3,13 @@ import jwt from 'jsonwebtoken';
 
 import { env } from '../config/env';
 import { UnauthorizedError } from '../utils/errors';
+import { UserRole } from '../utils/enums';
 
 export type AuthUser = {
   id: string;
   name: string;
   email: string;
-  role: 'user' | 'admin';
+  role: UserRole;
   kyc_status: string;
 };
 
@@ -35,7 +36,7 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
       sub?: string;
       name?: string;
       email?: string;
-      role?: 'user' | 'admin';
+      role?: UserRole;
       kyc_status?: string;
     };
     const userId = payload.id ?? payload.sub;
@@ -44,7 +45,7 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
       id: userId,
       name: payload.name ?? '',
       email: payload.email ?? '',
-      role: payload.role ?? 'user',
+      role: payload.role ?? UserRole.user,
       kyc_status: payload.kyc_status ?? 'unverified',
     };
     return next();

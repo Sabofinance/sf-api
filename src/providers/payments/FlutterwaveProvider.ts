@@ -7,16 +7,51 @@ import type { InitiateDepositInput, InitiateDepositResult, PaymentProvider, Webh
 
 export class FlutterwaveProvider implements PaymentProvider {
   async initiateDeposit(input: InitiateDepositInput): Promise<InitiateDepositResult> {
-    // Phase 1: we only persist deposit initiation and return reference.
-    // Controllers must never call Flutterwave directly.
-    return {
-      provider: 'flutterwave',
-      provider_reference: input.reference,
-      payment_link: null,
-    };
+    if (!env.FLUTTERWAVE_SECRET) {
+      throw new AppError('CONFIG_ERROR', 'FLUTTERWAVE_SECRET is required for NGN deposits', 500);
+    }
+
+    try {
+      const response = await fetch('https://api.flutterwave.com/v3/payments', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.FLUTTERWAVE_SECRET}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tx_ref: input.reference,
+          amount: input.amount,
+          currency: input.currency,
+          redirect_url: 'http://localhost:5173/dashboard/deposits/callback',
+          customer: {
+            email: input.customerEmail,
+          },
+          customizations: {
+            title: 'Sabo Finance Deposit',
+            description: 'Wallet funding',
+            logo: 'https://sabofinance.com/logo.png',
+          },
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || result.status !== 'success') {
+        throw new AppError('PAYMENT_PROVIDER_ERROR', result.message || 'Failed to initiate payment', 400);
+      }
+
+      return {
+        provider: 'flutterwave',
+        provider_reference: result.data.id,
+        payment_link: result.data.link,
+      };
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError('PAYMENT_PROVIDER_ERROR', 'An error occurred with Flutterwave', 500);
+    }
   }
 
-  async handleWebhook(_rawBody: unknown, headers: Record<string, string | string[] | undefined>): Promise<WebhookResult> {
+  async handleWebhook(rawBody: any, headers: Record<string, string | string[] | undefined>): Promise<WebhookResult> {
     const expected = env.FLUTTERWAVE_WEBHOOK_HASH;
     const received = headers['verif-hash'];
     const receivedVal = Array.isArray(received) ? received[0] : received;

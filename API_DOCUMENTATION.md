@@ -188,6 +188,32 @@ Yes
 
 ---
 
+### Endpoint
+`GET /admin/dashboard`
+
+### Description
+Retrieves aggregated statistics for the admin dashboard, including user counts, KYC statuses, and chart data for the last 7 days.
+
+### Auth Required
+Yes (Admin)
+
+### Response Example
+```json
+{
+  "success": true,
+  "data": {
+    "users": { "total": "100", "active": "95", "suspended": "5" },
+    "kyc": { "total": "50", "pending": "10", "verified": "35", "rejected": "5" },
+    "pendingDeposits": [],
+    "recentKyc": [],
+    "charts": {
+      "kycSubmissions": [{ "label": "Mon", "value": "5" }, "..."],
+      "deposits": [{ "label": "Mon", "value": "2" }, "..."]
+    }
+  }
+}
+```
+
 ## Notifications
 
 ### Endpoint
@@ -628,6 +654,45 @@ Returns the latest exchange rates for all currency pairs.
 ---
 
 ## Admin
+
+### Endpoint
+`POST /admin/auth/login`
+
+### Description
+Admin Step 1: Verify password and send an OTP to the admin's email.
+
+### Request Body
+```json
+{
+  "email": "admin@example.com",
+  "password": "AdminPassword123!"
+}
+```
+
+### Endpoint
+`POST /admin/auth/verify-otp`
+
+### Description
+Admin Step 2: Verify the OTP and issue an admin-scoped JWT.
+
+### Response Example
+```json
+{
+  "success": true,
+  "data": {
+    "tokens": {
+      "accessToken": "jwt",
+      "refreshToken": "jwt"
+    },
+    "user": {
+      "id": "uuid",
+      "name": "Admin User",
+      "email": "admin@example.com",
+      "role": "admin"
+    }
+  }
+}
+```
 
 ### Endpoint
 `GET /admin/users`

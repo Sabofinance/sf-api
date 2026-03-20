@@ -34,6 +34,7 @@ export enum LedgerType {
 export enum UserRole {
   user = 'user',
   admin = 'admin',
+  super_admin = 'super_admin',
 }
 
 export enum WithdrawalStatus {

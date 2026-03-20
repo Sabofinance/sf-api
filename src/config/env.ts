@@ -12,6 +12,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(1),
   JWT_REFRESH_SECRET: z.string().min(1),
   FLUTTERWAVE_SECRET: z.string().min(1).optional(),
+  FLUTTERWAVE_PUBLIC_KEY: z.string().min(1).optional(),
   FLUTTERWAVE_WEBHOOK_HASH: z.string().min(1).optional(),
   FX_API_KEY: z.string().min(1).optional(),
   CLOUDINARY_URL: z.string().min(1).optional(),
