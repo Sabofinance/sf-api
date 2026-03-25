@@ -38,9 +38,24 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
   let { html, text, template, context } = options;
 
   if (template) {
-    const templatePath = path.join(__dirname, '../templates/emails', `${template}.html`);
+    // Determine the correct path based on whether we're running compiled code or ts-node
+    const basePath = __dirname.includes('dist') 
+      ? path.join(__dirname, '../../src/templates/emails') // If in dist/services, go up to root then src
+      : path.join(__dirname, '../templates/emails'); // If in src/services
+      
+    // Better yet, use process.cwd() as a reliable base
+    const cwdPath = path.join(process.cwd(), 'src/templates/emails', `${template}.html`);
+    const fallbackPath = path.join(__dirname, '../templates/emails', `${template}.html`);
+    
     try {
-      let content = await fs.readFile(templatePath, 'utf-8');
+      let content = '';
+      try {
+        content = await fs.readFile(cwdPath, 'utf-8');
+      } catch (e) {
+        // Fallback to relative path if cwd doesn't work
+        content = await fs.readFile(fallbackPath, 'utf-8');
+      }
+      
       if (context) {
         Object.entries(context).forEach(([key, value]) => {
           content = content.replace(new RegExp(`{{${key}}}`, 'g'), value);
@@ -49,7 +64,9 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
       html = content;
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.error(`Failed to load email template: ${template}`, error);
+      console.error(`Failed to load email template: ${template} at paths ${cwdPath} and ${fallbackPath}`, error);
+      // Fallback to plain text if template fails
+      html = `<p>Failed to load template ${template}. Please contact support.</p>`;
     }
   }
 
