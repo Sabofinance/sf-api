@@ -4,6 +4,7 @@ import { accountRouter } from './modules/account/account.routes';
 import { adminRouter } from './modules/admin/admin.routes';
 import { authRouter } from './modules/auth/auth.routes';
 import { beneficiariesRouter } from './modules/beneficiaries/beneficiaries.routes';
+import { bidsRouter } from './modules/bids/bids.routes';
 import { conversionsRouter } from './modules/conversions/conversions.routes';
 import { depositsRouter, webhooksRouter } from './modules/deposits/deposits.routes';
 import { disputesRouter } from './modules/disputes/disputes.routes';
@@ -16,7 +17,7 @@ import { sabitsRouter } from './modules/sabits/sabits.routes';
 import { tradesRouter } from './modules/trades/trades.routes';
 import { walletsRouter } from './modules/wallets/wallets.routes';
 import { withdrawalsRouter } from './modules/withdrawals/withdrawals.routes';
-import { bidsRouter } from './modules/bids/bids.routes';
+
 
 export const apiRouter = Router();
 

@@ -23,7 +23,9 @@ if (env.REDIS_URL) {
       port: parseInt(parsed.port || '6379', 10),
       username: parsed.username || undefined,
       password: parsed.password || undefined,
-      tls: parsed.protocol === 'rediss:' ? {} : undefined,
+      tls: parsed.protocol === 'rediss:' ? {
+        rejectUnauthorized: false
+      } : undefined,
     };
   } catch (e) {
     console.error('Failed to parse REDIS_URL', e);
