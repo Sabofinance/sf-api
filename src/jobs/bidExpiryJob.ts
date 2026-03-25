@@ -7,10 +7,28 @@ import { NotificationService } from '../services/notificationService';
 import { WalletService } from '../services/walletService';
 import { BidStatus, Currency, LedgerType, NotificationType } from '../utils/enums';
 
-const connection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379', 10),
+const redisHost = env.REDIS_URL || env.REDIS_HOST || 'localhost';
+
+// Parse Redis URL if provided to configure BullMQ correctly
+let connection: any = {
+  host: redisHost,
+  port: env.REDIS_PORT || 6379,
 };
+
+if (env.REDIS_URL) {
+  try {
+    const parsed = new URL(env.REDIS_URL);
+    connection = {
+      host: parsed.hostname,
+      port: parseInt(parsed.port || '6379', 10),
+      username: parsed.username || undefined,
+      password: parsed.password || undefined,
+      tls: parsed.protocol === 'rediss:' ? {} : undefined,
+    };
+  } catch (e) {
+    console.error('Failed to parse REDIS_URL', e);
+  }
+}
 
 export const bidExpiryQueue = new Queue('bid-expiry', { connection });
 

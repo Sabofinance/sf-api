@@ -25,6 +25,9 @@ const envSchema = z.object({
   EMAIL_FROM_ADDRESS: z.string().email().optional(),
   EMAIL_FROM_NAME: z.string().optional(),
   CORS_ORIGIN: z.string().default('*'),
+  REDIS_URL: z.string().optional(),
+  REDIS_HOST: z.string().optional(),
+  REDIS_PORT: z.coerce.number().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
