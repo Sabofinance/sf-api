@@ -13,6 +13,27 @@ const paginationSchema = z.object({
 
 const idSchema = z.object({ id: z.string().uuid() });
 
+/**
+ * @swagger
+ * /notifications:
+ *   get:
+ *     summary: List notifications
+ *     tags: [Notifications]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
 export async function listNotifications(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
   const { page, limit } = paginationSchema.parse(req.query);
@@ -35,6 +56,25 @@ export async function listNotifications(req: Request, res: Response) {
   return ok(res, { notifications });
 }
 
+/**
+ * @swagger
+ * /notifications/{id}/read:
+ *   patch:
+ *     summary: Mark a notification as read
+ *     tags: [Notifications]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
 export async function markRead(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
   const { id } = idSchema.parse(req.params);
@@ -53,6 +93,20 @@ export async function markRead(req: Request, res: Response) {
   return ok(res, { message: 'Notification marked as read' });
 }
 
+/**
+ * @swagger
+ * /notifications/mark-all-read:
+ *   post:
+ *     summary: Mark all notifications as read
+ *     tags: [Notifications]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
 export async function markAllRead(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
 

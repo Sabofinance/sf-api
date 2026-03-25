@@ -29,6 +29,7 @@ export function createSwaggerSpec() {
         { name: 'Disputes' },
         { name: 'KYC' },
         { name: 'Exchange Rates' },
+        { name: 'Notifications' },
         { name: 'Admin' },
       ],
       components: {
@@ -261,6 +262,27 @@ export function createSwaggerSpec() {
           DisputeStatus: {
             type: 'string',
             enum: ['open', 'resolved', 'closed'],
+          },
+          Notification: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              user_id: { type: 'string', format: 'uuid', nullable: true },
+              title: { type: 'string', example: 'Deposit Confirmed' },
+              message: { type: 'string', example: 'Your deposit of 5000.00 NGN has been approved and credited.' },
+              type: { $ref: '#/components/schemas/NotificationType' },
+              status: { $ref: '#/components/schemas/NotificationStatus' },
+              related_id: { type: 'string', format: 'uuid', nullable: true },
+              created_at: { type: 'string', format: 'date-time' },
+            },
+          },
+          NotificationType: {
+            type: 'string',
+            enum: ['info', 'success', 'warning', 'error'],
+          },
+          NotificationStatus: {
+            type: 'string',
+            enum: ['unread', 'read'],
           },
         },
       },

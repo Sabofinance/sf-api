@@ -41,7 +41,7 @@ const refreshTokenSchema = z.object({
 
 function signAccessToken(user: { id: string; name: string; email: string; role: UserRole; kyc_status: string }) {
   const payload = { id: user.id, name: user.name, email: user.email, role: user.role, kyc_status: user.kyc_status };
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '15m' });
+  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '30m' });
 }
 
 function signRefreshToken(user: { id: string; name: string; email: string; role: UserRole; kyc_status: string }) {
