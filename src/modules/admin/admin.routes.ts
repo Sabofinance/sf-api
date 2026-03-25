@@ -21,6 +21,7 @@ import {
   listAllDeposits,
   listAllDisputes,
   listAllTransactions,
+  verifyFlutterwaveDeposit,
 } from './admin.controller';
 
 export const adminRouter = Router();
@@ -46,6 +47,7 @@ adminRouter.post('/kyc/:id/reject', asyncHandler(rejectKyc));
 // Deposit Management
 adminRouter.post('/deposits/:id/approve', asyncHandler(approveDeposit));
 adminRouter.post('/deposits/:id/reject', asyncHandler(rejectDeposit));
+adminRouter.post('/deposits/:id/verify-flutterwave', asyncHandler(verifyFlutterwaveDeposit));
 
 // Dashboard & Analytics
 adminRouter.get('/dashboard', asyncHandler(getDashboardStats));

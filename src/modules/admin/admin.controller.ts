@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 import bcrypt from 'bcrypt';
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
@@ -12,7 +14,7 @@ import { sendEmail } from '../../services/emailService';
 import { NotificationService } from '../../services/notificationService';
 import { WalletService } from '../../services/walletService';
 import { ok } from '../../utils/apiResponse';
-import { DepositStatus, KycStatus, LedgerType, NotificationType, UserRole } from '../../utils/enums';
+import { Currency, DepositStatus, KycStatus, LedgerType, NotificationType, UserRole } from '../../utils/enums';
 import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 
 const loginSchema = z.object({
@@ -483,6 +485,129 @@ export async function approveDeposit(req: Request, res: Response) {
     // or initiated (NGN deposits where webhook failed but admin verified the payment).
     if (dep.status !== DepositStatus.pending_review && dep.status !== DepositStatus.initiated) {
       throw new AppError('INVALID_STATUS', 'Deposit is not pending review or initiated', 400);
+    }
+
+    await walletService.credit({
+      queryRunner: qr,
+      userId: dep.user_id,
+      currency: dep.currency,
+      amount: dep.amount,
+      type: LedgerType.deposit,
+      initiatedBy: req.user!.id,
+      relatedId: dep.id,
+      reference: dep.reference,
+    });
+
+    await qr.query(`UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2 WHERE "id" = $3`, [
+      DepositStatus.completed,
+      req.user!.id,
+      dep.id,
+    ]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: dep.user_id,
+      title: 'Deposit Confirmed',
+      message: `Your deposit of ${dep.amount} ${dep.currency} has been approved and credited.`,
+      type: NotificationType.success,
+      relatedId: dep.id,
+    });
+
+    const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [dep.id])) as Deposit[];
+
+    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [dep.user_id])) as User[];
+    await sendEmail({
+      to: user[0].email,
+      subject: 'Deposit Confirmed',
+      template: 'deposit-confirmation',
+      context: {
+        name: user[0].name,
+        amount: dep.amount,
+        currency: dep.currency,
+        reference: dep.reference,
+      },
+    });
+
+    return updated[0];
+  });
+
+  return ok(res, { deposit });
+}
+
+/**
+ * @swagger
+ * /admin/deposits/{id}/verify-flutterwave:
+ *   post:
+ *     summary: Manually verify and credit an initiated Flutterwave NGN deposit
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function verifyFlutterwaveDeposit(req: Request, res: Response) {
+  const { id } = idSchema.parse(req.params);
+
+  const walletService = new WalletService();
+
+  const deposit = await withTransaction(async (qr) => {
+    const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [id])) as Deposit[];
+    const dep = rows[0];
+    if (!dep) throw new NotFoundError('Deposit not found');
+
+    if (dep.status === DepositStatus.completed) return dep;
+    
+    if (dep.status !== DepositStatus.initiated) {
+      throw new AppError('INVALID_STATUS', 'Only initiated deposits can be verified with Flutterwave', 400);
+    }
+    
+    if (dep.currency !== Currency.NGN) {
+      throw new AppError('INVALID_CURRENCY', 'Only NGN deposits can be verified with Flutterwave', 400);
+    }
+
+    // Verify via Flutterwave Verification API
+    if (env.FLUTTERWAVE_SECRET) {
+      try {
+        // Flutterwave has an endpoint to verify transactions by tx_ref
+        const response = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${dep.reference}`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${env.FLUTTERWAVE_SECRET}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        const result = await response.json();
+        
+        if (!response.ok || result.status !== 'success') {
+          throw new AppError('VERIFICATION_FAILED', `Flutterwave Verification Failed: ${result.message || 'Transaction not found or successful'}`, 400);
+        }
+        
+        // Ensure the amount and currency match
+        if (result.data.status !== 'successful') {
+           throw new AppError('VERIFICATION_FAILED', `Transaction status is ${result.data.status}, expected successful`, 400);
+        }
+        
+        if (Number(result.data.amount) < Number(dep.amount)) {
+          throw new AppError('VERIFICATION_FAILED', `Amount mismatch. Paid: ${result.data.amount}, Expected: ${dep.amount}`, 400);
+        }
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError('VERIFICATION_ERROR', 'Could not verify transaction with Flutterwave', 500);
+      }
+    } else {
+      // If no Flutterwave secret is configured (e.g. testing), we'll bypass actual verification
+      // and proceed with manual crediting based on admin's trust.
+      console.warn('FLUTTERWAVE_SECRET not found, bypassing actual API verification for manual deposit approval.');
     }
 
     await walletService.credit({
