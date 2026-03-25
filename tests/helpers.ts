@@ -2,10 +2,33 @@ import jwt from 'jsonwebtoken';
 import request from 'supertest';
 
 import { createApp } from '../src/app';
+import { AppDataSource } from '../src/database/data-source';
+import { User } from '../src/database/entities/User';
 import { withTransaction } from '../src/database/transaction';
 import { KycStatus, UserRole } from '../src/utils/enums';
 
+// Check if standard test env var exists to prevent wiping real local DBs if .env has dev
+if (!process.env.DATABASE_URL_TEST) {
+  throw new Error('DATABASE_URL_TEST must be defined in tests');
+}
+
 export const app = createApp();
+
+beforeAll(async () => {
+  // Setup database connection for tests
+  // We need to override the DATABASE_URL to use DATABASE_URL_TEST if we're in test mode
+  if (process.env.DATABASE_URL_TEST) {
+    process.env.DATABASE_URL = process.env.DATABASE_URL_TEST;
+  }
+  
+  try {
+    if (!AppDataSource.isInitialized) {
+      await AppDataSource.initialize();
+    }
+  } catch (error) {
+    console.error('Failed to initialize database:', error);
+  }
+});
 
 type TokenInput = {
   id: string;

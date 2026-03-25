@@ -23,6 +23,7 @@ export function createSwaggerSpec() {
         { name: 'Withdrawals' },
         { name: 'Beneficiaries' },
         { name: 'Sabits' },
+        { name: 'Bids' },
         { name: 'Trades' },
         { name: 'Conversions' },
         { name: 'Disputes' },
@@ -74,6 +75,7 @@ export function createSwaggerSpec() {
             type: 'object',
             properties: {
               id: { type: 'string', format: 'uuid' },
+              username: { type: 'string' },
               name: { type: 'string' },
               email: { type: 'string' },
               phone: { type: 'string' },

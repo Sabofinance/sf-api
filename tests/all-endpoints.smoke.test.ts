@@ -20,6 +20,7 @@ describe('All Endpoints Smoke', () => {
       password: 'Password123!',
     });
     expect(reg.status).toBe(201);
+    expect(reg.body.data.user).toHaveProperty('username');
 
     const login = await request(app).post('/auth/login').send({
       email: reg.body.data.user.email,
@@ -97,6 +98,7 @@ describe('All Endpoints Smoke', () => {
       .post('/deposits/ngn/initiate')
       .set('Authorization', `Bearer ${verified.accessToken}`)
       .send({ amount: '1000.00', email: verified.email });
+    if (depInit.status !== 201) console.error(depInit.body);
     expect(depInit.status).toBe(201);
 
     const depList = await request(app).get('/deposits').set('Authorization', `Bearer ${verified.accessToken}`);
@@ -163,6 +165,20 @@ describe('All Endpoints Smoke', () => {
 
     const buyer = await registerVerifiedUser();
 
+    // Set PIN for the buyer
+    const setPinBuyer = await request(app)
+      .post('/account/transaction-pin/set')
+      .set('Authorization', `Bearer ${buyer.accessToken}`)
+      .send({ pin: '123456', confirm_pin: '123456' });
+    expect(setPinBuyer.status).toBe(200);
+
+    // Set PIN for the seller
+    const setPinSeller = await request(app)
+      .post('/account/transaction-pin/set')
+      .set('Authorization', `Bearer ${verified.accessToken}`)
+      .send({ pin: '654321', confirm_pin: '654321' });
+    expect(setPinSeller.status).toBe(200);
+
     await withTransaction(async (qr) => {
       await qr.query(`UPDATE "wallets" SET "balance" = $1 WHERE "user_id" = $2 AND "currency" = $3`, [
         '100.00',
@@ -189,13 +205,44 @@ describe('All Endpoints Smoke', () => {
     const sabitGet = await request(app).get(`/sabits/${sabitId}`);
     expect(sabitGet.status).toBe(200);
 
+    // --- PHASE 3: BIDS ---
+    const bidPlace = await request(app)
+      .post('/bids')
+      .set('Authorization', `Bearer ${buyer.accessToken}`)
+      .send({
+        sabit_id: sabitId,
+        amount: '20.00',
+        proposed_rate_ngn: '1450.00',
+        pin: '123456',
+      });
+    expect(bidPlace.status).toBe(201);
+    const bidId = bidPlace.body.data.bid.id;
+
+    const bidAccept = await request(app)
+      .put(`/bids/${bidId}/accept`)
+      .set('Authorization', `Bearer ${verified.accessToken}`)
+      .send({ pin: '654321' });
+    expect(bidAccept.status).toBe(200);
+
+    const getMineBids = await request(app).get('/bids/mine').set('Authorization', `Bearer ${buyer.accessToken}`);
+    expect(getMineBids.status).toBe(200);
+
+    const getReceivedBids = await request(app).get('/bids/received').set('Authorization', `Bearer ${verified.accessToken}`);
+    expect(getReceivedBids.status).toBe(200);
+
     const tradeInit = await request(app)
       .post('/trades/initiate')
       .set('Authorization', `Bearer ${buyer.accessToken}`)
-      .send({ sabit_id: sabitId, amount: '20.00' });
+      .send({ sabit_id: sabitId, amount: '20.00', pin: '123456' });
     expect(tradeInit.status).toBe(201);
 
     const tradeId = tradeInit.body.data.trade.id as string;
+
+    const tradeSellerConfirm = await request(app)
+      .put(`/trades/${tradeId}/seller-confirm`)
+      .set('Authorization', `Bearer ${verified.accessToken}`)
+      .send({ pin: '654321' });
+    expect(tradeSellerConfirm.status).toBe(200);
 
     const tradeConfirm = await request(app)
       .post(`/trades/${tradeId}/confirm`)

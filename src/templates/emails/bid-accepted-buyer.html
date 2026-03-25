@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { text-align: center; margin-bottom: 20px; }
+    .content { background: #f9f9f9; padding: 20px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Your Bid Was Accepted</h2>
+    </div>
+    <div class="content">
+      <p>Great news — the seller has accepted your bid ({{reference}}).</p>
+      <ul>
+        <li>Trade reference: {{trade_reference}}</li>
+        <li>Agreed rate: ₦{{proposed_rate_ngn}}</li>
+        <li>Amount: {{amount}} {{currency}}</li>
+      </ul>
+      <p>Please complete your payment to the seller.</p>
+    </div>
+  </div>
+</body>
+</html>

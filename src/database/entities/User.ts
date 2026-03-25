@@ -11,6 +11,10 @@ export class User {
   name!: string;
 
   @Index({ unique: true })
+  @Column({ type: 'varchar', length: 30 })
+  username!: string;
+
+  @Index({ unique: true })
   @Column({ type: 'varchar', length: 320 })
   email!: string;
 
@@ -38,6 +42,12 @@ export class User {
 
   @Column({ type: 'boolean', default: false })
   phone_verified!: boolean;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  transaction_pin_hash?: string;
+
+  @Column({ type: 'boolean', default: false })
+  transaction_pin_set!: boolean;
 
   @Column({ type: 'enum', enum: KycStatus, default: KycStatus.unverified })
   kyc_status!: KycStatus;

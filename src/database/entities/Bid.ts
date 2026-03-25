@@ -7,19 +7,23 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
-import { Currency, TradeStatus } from '../../utils/enums';
+import { BidStatus, Currency } from '../../utils/enums';
 
-import { Bid } from './Bid';
 import { Sabit } from './Sabit';
 import { User } from './User';
 
-@Entity({ name: 'trades' })
+@Entity({ name: 'bids' })
 @Index(['sabit_id'])
 @Index(['buyer_id'])
 @Index(['seller_id'])
-export class Trade {
+@Index(['status'])
+export class Bid {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+
+  @Column({ type: 'varchar', length: 32, unique: true })
+  @Index({ unique: true })
+  reference!: string;
 
   @Column({ type: 'uuid' })
   sabit_id!: string;
@@ -46,33 +50,29 @@ export class Trade {
   amount!: string;
 
   @Column({ type: 'numeric', precision: 18, scale: 2 })
-  rate_ngn!: string;
+  proposed_rate_ngn!: string;
 
   @Column({ type: 'numeric', precision: 18, scale: 2 })
-  total_ngn!: string;
+  original_rate_ngn!: string;
 
-  @Column({ type: 'enum', enum: TradeStatus, default: TradeStatus.initiated })
-  status!: TradeStatus;
+  @Column({ type: 'numeric', precision: 18, scale: 2 })
+  total_ngn_at_bid_rate!: string;
+
+  @Column({ type: 'enum', enum: BidStatus, default: BidStatus.pending })
+  status!: BidStatus;
 
   @Column({ type: 'boolean', default: false })
   buyer_pin_verified!: boolean;
 
-  @Column({ type: 'boolean', default: false })
-  seller_pin_verified!: boolean;
+  @Column({ type: 'timestamptz' })
+  expires_at!: Date;
 
   @Column({ type: 'timestamptz', nullable: true })
-  pin_expires_at?: Date;
+  seller_responded_at?: Date;
 
-  @Column({ type: 'timestamptz', nullable: true })
-  seller_notified_at?: Date;
-
-  @Column({ type: 'varchar', length: 32, unique: true })
-  @Index({ unique: true })
-  reference!: string;
+  @Column({ type: 'text', nullable: true })
+  rejection_reason?: string;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
-
-  @Column({ type: 'timestamptz', nullable: true })
-  completed_at!: Date | null;
 }

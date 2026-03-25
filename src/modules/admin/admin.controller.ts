@@ -1,6 +1,6 @@
 import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
 import type { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
 import { env } from '../../config/env';
@@ -479,8 +479,10 @@ export async function approveDeposit(req: Request, res: Response) {
     if (!dep) throw new NotFoundError('Deposit not found');
 
     if (dep.status === DepositStatus.completed) return dep;
-    if (dep.status !== DepositStatus.pending_review) {
-      throw new AppError('INVALID_STATUS', 'Deposit is not pending review', 400);
+    // We want to allow admins to approve deposits that are either pending_review (manual foreign deposits)
+    // or initiated (NGN deposits where webhook failed but admin verified the payment).
+    if (dep.status !== DepositStatus.pending_review && dep.status !== DepositStatus.initiated) {
+      throw new AppError('INVALID_STATUS', 'Deposit is not pending review or initiated', 400);
     }
 
     await walletService.credit({
@@ -505,7 +507,7 @@ export async function approveDeposit(req: Request, res: Response) {
       queryRunner: qr,
       userId: dep.user_id,
       title: 'Deposit Confirmed',
-      message: `Your manual deposit of ${dep.amount} ${dep.currency} has been approved and credited.`,
+      message: `Your deposit of ${dep.amount} ${dep.currency} has been approved and credited.`,
       type: NotificationType.success,
       relatedId: dep.id,
     });
@@ -532,7 +534,18 @@ export async function approveDeposit(req: Request, res: Response) {
 }
 
 /**
- * Admin Dashboard Stats
+ * @swagger
+ * /admin/dashboard:
+ *   get:
+ *     summary: Get platform analytics and dashboard stats
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
 export async function getDashboardStats(req: Request, res: Response) {
   const stats = await withTransaction(async (qr) => {
@@ -562,6 +575,52 @@ export async function getDashboardStats(req: Request, res: Response) {
       WHERE status = 'pending_review' 
       ORDER BY created_at DESC 
       LIMIT 5
+    `);
+
+    // Financial Metrics (Total Volumes by Currency)
+    const depositVolumes = await qr.query(`
+      SELECT currency, SUM(amount) as total_volume
+      FROM "deposits"
+      WHERE status = 'completed'
+      GROUP BY currency
+    `);
+
+    const withdrawalVolumes = await qr.query(`
+      SELECT currency, SUM(amount) as total_volume
+      FROM "withdrawals"
+      WHERE status = 'completed'
+      GROUP BY currency
+    `);
+
+    const tradeVolumes = await qr.query(`
+      SELECT currency, SUM(amount) as total_foreign_volume, SUM(total_ngn) as total_ngn_volume, COUNT(*) as total_trades
+      FROM "trades"
+      WHERE status = 'completed'
+      GROUP BY currency
+    `);
+
+    const escrowTVL = await qr.query(`
+      SELECT currency, SUM(escrow_balance) as total_locked
+      FROM "wallets"
+      WHERE escrow_balance > 0
+      GROUP BY currency
+    `);
+
+    // P2P/Marketplace Metrics
+    const sabitStats = await qr.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'active') as active,
+        COUNT(*) FILTER (WHERE status = 'completed') as completed
+      FROM "sabits"
+    `);
+
+    const disputeStats = await qr.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'open') as open,
+        COUNT(*) FILTER (WHERE status = 'resolved') as resolved
+      FROM "disputes"
     `);
 
     const recentKyc = await qr.query(`
@@ -594,19 +653,118 @@ export async function getDashboardStats(req: Request, res: Response) {
       ORDER BY day ASC
     `);
 
+    // Charts: Last 7 days Trades
+    const tradeChart = await qr.query(`
+      SELECT 
+        TO_CHAR(day, 'Dy') as label,
+        COALESCE(COUNT(t.id), 0) as value
+      FROM generate_series(now() - interval '6 days', now(), interval '1 day') day
+      LEFT JOIN "trades" t ON date_trunc('day', t.created_at) = date_trunc('day', day) AND t.status = 'completed'
+      GROUP BY day
+      ORDER BY day ASC
+    `);
+
     return {
       users: userStats[0],
       kyc: kycStats[0],
+      marketplace: {
+        sabits: sabitStats[0],
+        disputes: disputeStats[0]
+      },
+      financials: {
+        depositVolumes,
+        withdrawalVolumes,
+        tradeVolumes,
+        escrowTVL
+      },
       pendingDeposits,
       recentKyc,
       charts: {
         kycSubmissions: kycChart,
-        deposits: depositChart
+        deposits: depositChart,
+        trades: tradeChart
       }
     };
   });
 
   return ok(res, stats);
+}
+
+/**
+ * @swagger
+ * /admin/analytics/impact:
+ *   get:
+ *     summary: Get high-level platform impact and efficiency metrics
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function getImpactAnalytics(req: Request, res: Response) {
+  const impact = await withTransaction(async (qr) => {
+    // 1. All-Time System Volume (Proof of Scale)
+    // We sum absolute amounts from the ledger to show total money moved
+    const allTimeLedgerVolume = await qr.query(`
+      SELECT currency, SUM(amount) as total_processed
+      FROM "ledger"
+      WHERE status = 'completed'
+      GROUP BY currency
+    `);
+
+    // 2. User Growth Velocity (Traction)
+    const userGrowth = await qr.query(`
+      WITH recent AS (
+        SELECT COUNT(*) as recent_count FROM "users" WHERE created_at >= NOW() - INTERVAL '30 days'
+      ),
+      previous AS (
+        SELECT COUNT(*) as prev_count FROM "users" WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days'
+      )
+      SELECT recent_count, prev_count, 
+             CASE WHEN prev_count = 0 THEN 100 
+             ELSE ROUND(((recent_count::numeric - prev_count::numeric) / prev_count::numeric) * 100, 2) 
+             END as growth_percentage
+      FROM recent, previous
+    `);
+
+    // 3. Trust & Safety Metrics (Product Quality)
+    const tradeSafety = await qr.query(`
+      SELECT 
+        COUNT(*) as total_trades,
+        COUNT(*) FILTER (WHERE status = 'completed') as successful_trades,
+        COUNT(*) FILTER (WHERE status = 'disputed') as disputed_trades,
+        ROUND((COUNT(*) FILTER (WHERE status = 'disputed')::numeric / NULLIF(COUNT(*), 0)::numeric) * 100, 2) as dispute_rate_percentage
+      FROM "trades"
+    `);
+
+    // 4. Operational Efficiency
+    // Since we don't track 'reviewed_at' on KYC explicitly, we proxy it by looking at Admin Logs for KYC actions
+    const operationalEfficiency = await qr.query(`
+      SELECT COUNT(*) as total_admin_actions
+      FROM "admin_logs"
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+    `);
+
+    return {
+      scale: {
+        allTimeLedgerVolume,
+      },
+      traction: {
+        userGrowth30Days: userGrowth[0],
+      },
+      trustAndSafety: {
+        tradeSafety: tradeSafety[0],
+      },
+      efficiency: {
+        adminActions30Days: operationalEfficiency[0].total_admin_actions,
+      }
+    };
+  });
+
+  return ok(res, impact);
 }
 
 /**

@@ -3,7 +3,9 @@ import request from 'supertest';
 import { ExchangeRate } from '../src/database/entities/ExchangeRate'
 import { withTransaction } from '../src/database/transaction';
 
-import { app } from './helpers';;
+import { createApp } from '../src/app';
+
+const app = createApp();
 
 describe('Exchange Rates', () => {
   it('returns latest rate per pair', async () => {

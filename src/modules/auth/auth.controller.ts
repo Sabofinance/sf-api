@@ -9,6 +9,7 @@ import { env } from '../../config/env';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
 import { NotificationService } from '../../services/notificationService';
+import { generateUsername } from '../../services/usernameService';
 import { created, ok } from '../../utils/apiResponse';
 import { Currency, UserRole, NotificationType } from '../../utils/enums';
 import { AppError, UnauthorizedError } from '../../utils/errors';
@@ -83,11 +84,13 @@ export async function register(req: Request, res: Response) {
   const password_hash = await bcrypt.hash(input.password, 12);
 
   const result = await withTransaction(async (qr) => {
+    const username = await generateUsername(input.name, qr);
+
     const rows = (await qr.query(
-      `INSERT INTO "users" ("id","name","email","phone","password_hash","email_verified","phone_verified","kyc_status","role","is_suspended","created_at")
-       VALUES (gen_random_uuid(), $1,$2,$3,$4,false,false,'unverified',$5,false, now())
-       RETURNING "id","name","email","phone","email_verified","phone_verified","kyc_status","role","is_suspended","created_at"`,
-      [input.name, input.email.toLowerCase(), input.phone, password_hash, UserRole.user],
+      `INSERT INTO "users" ("id","name","username","email","phone","password_hash","email_verified","phone_verified","kyc_status","role","is_suspended","created_at")
+       VALUES (gen_random_uuid(), $1,$2,$3,$4,$5,false,false,'unverified',$6,false, now())
+       RETURNING "id","name","username","email","phone","email_verified","phone_verified","kyc_status","role","is_suspended","created_at"`,
+      [input.name, username, input.email.toLowerCase(), input.phone, password_hash, UserRole.user],
     )) as Array<Record<string, unknown>>;
 
     const user = rows[0] as { id: string; role: UserRole; kyc_status: string };
@@ -112,7 +115,7 @@ export async function register(req: Request, res: Response) {
     return rows[0];
   });
 
-  const user = result as unknown as { id: string; name: string; email: string; role: UserRole; kyc_status: string };
+  const user = result as unknown as { id: string; name: string; username: string; email: string; role: UserRole; kyc_status: string };
 
   // Send verification email
   const verificationToken = jwt.sign({ id: user.id, email: user.email, purpose: 'verify-email' }, env.JWT_SECRET, { expiresIn: '1h' });
@@ -301,6 +304,7 @@ export async function getMe(req: Request, res: Response) {
       `SELECT 
          "id", 
          "name", 
+         "username",
          "email", 
          "phone", 
          "email_verified", 

@@ -2,67 +2,21 @@ import fs from 'fs/promises';
 import path from 'path';
 
 import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 import { env } from '../config/env';
 
-// Helper to determine secure flag based on common SMTP ports
-// 465 → implicit TLS (secure: true)
-// 587 → STARTTLS (secure: false, upgrades later)
-// 25  → usually plain (but avoid if possible)
-// Everything else → assume false + explicit tls options if needed
-function getSecureFlag(port: number | string): boolean {
-  const portNum = Number(port);
-  if (isNaN(portNum)) return false;
-  return portNum === 465; // true only for 465, false for 587/25/others
-}
+const resend = new Resend(env.RESEND_API_KEY || 're_test_key_123');
 
-const smtpPort = env.SMTP_PORT || 587; // fallback to most common secure submission port
-
-const isSmtpConfigured = env.EMAIL_ENABLED && !!(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS);
-
-let transporter: nodemailer.Transporter | null = null;
-
-if (isSmtpConfigured) {
-  transporter = nodemailer.createTransport({
-    host: env.SMTP_HOST,
-    port: Number(smtpPort), // ensure it's a number
-    secure: getSecureFlag(smtpPort), // true for 465, false otherwise
-
-    auth: {
-      user: env.SMTP_USER,
-      pass: env.SMTP_PASS,
-    },
-    // Good defaults for reliability
-    pool: true, // reuse connections (great for multiple emails)
-    maxMessages: 100, // prevent overload
-    rateDelta: 1000, // 1 message/sec max (adjust as needed)
-    // Add timeouts to prevent ETIMEDOUT from hanging the app
-    connectionTimeout: 10000, // 10 seconds
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-  });
-
-  // Verify connection once at startup (optional but very useful)
-  if (process.env.NODE_ENV !== 'test') {
-    (async () => {
-      try {
-        await transporter?.verify();
-        console.log('SMTP transporter is ready to send emails');
-      } catch (error) {
-        console.error('SMTP connection verification failed:', error);
-        // In production: notify admin, don't crash the whole app
-      }
-    })();
-  }
-} else if (env.EMAIL_ENABLED) {
-  console.warn(
-    'EMAIL_ENABLED is true, but SMTP configuration is missing (SMTP_HOST, SMTP_USER, SMTP_PASS). Emails will be logged to the console.',
-  );
-} else {
-  console.log(
-    'EMAIL_ENABLED is false. Emails will be logged to the console instead of being sent.',
-  );
-}
+const transporter = env.SMTP_HOST ? nodemailer.createTransport({
+  host: env.SMTP_HOST,
+  port: env.SMTP_PORT,
+  secure: env.SMTP_PORT === 465,
+  auth: {
+    user: env.SMTP_USER,
+    pass: env.SMTP_PASS,
+  },
+}) : null;
 
 interface EmailOptions {
   to: string | string[]; // support single or multiple recipients
@@ -76,6 +30,7 @@ interface EmailOptions {
 
 export async function sendEmail(options: EmailOptions): Promise<{ messageId: string }> {
   if (process.env.NODE_ENV === 'test') {
+    // eslint-disable-next-line no-console
     console.log(`[TEST MODE] Email suppressed: TO=${options.to}, SUBJECT=${options.subject}`);
     return { messageId: 'test-message-id-' + Date.now() };
   }
@@ -93,38 +48,74 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
       }
       html = content;
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error(`Failed to load email template: ${template}`, error);
     }
   }
 
-  if (!transporter) {
+  if (!env.EMAIL_ENABLED) {
+    // eslint-disable-next-line no-console
     console.log('\n--- EMAIL MOCK ---');
+    // eslint-disable-next-line no-console
     console.log(`To: ${options.to}`);
+    // eslint-disable-next-line no-console
     console.log(`Subject: ${options.subject}`);
 
     // Extract key data for a cleaner console view
     if (context && (context.otp || context.resetLink)) {
+      // eslint-disable-next-line no-console
       if (context.otp) console.log(`OTP: ${context.otp}`);
+      // eslint-disable-next-line no-console
       if (context.resetLink) console.log(`Reset Link: ${context.resetLink}`);
     } else {
+      // eslint-disable-next-line no-console
       console.log(`Content: ${text || 'Check templates'}`);
     }
+    // eslint-disable-next-line no-console
     console.log('-------------------\n');
     return { messageId: 'mock-id-' + Date.now() };
   }
 
   try {
-    const info = await transporter.sendMail({
-      from: `"Sabo Finance" <${env.EMAIL_FROM_ADDRESS || env.SMTP_USER}>`, // consistent & safe
-      ...options,
-      html,
-      text,
-    });
+    const fromAddress = env.EMAIL_FROM_ADDRESS || env.SMTP_USER || 'noreply@sabofinance.com';
+    const fromString = `${env.EMAIL_FROM_NAME || 'Sabo Finance'} <${fromAddress}>`;
 
-    console.log('Email sent successfully - Message ID:', info.messageId);
-    return { messageId: info.messageId };
+    if (transporter) {
+      const info = await transporter.sendMail({
+        from: fromString,
+        to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
+        subject: options.subject,
+        html: html || '',
+        text: text || '',
+      });
+      // eslint-disable-next-line no-console
+      console.log('Email sent successfully via SMTP - Message ID:', info.messageId);
+      return { messageId: info.messageId };
+    }
+
+    if (env.RESEND_API_KEY) {
+      const { data, error } = await resend.emails.send({
+        from: fromString,
+        to: Array.isArray(options.to) ? options.to : [options.to],
+        subject: options.subject,
+        html: html || '',
+        text: text || '',
+      });
+
+      if (error) {
+        throw new Error(`Resend Email sending failed: ${error.message}`);
+      }
+
+      // eslint-disable-next-line no-console
+      console.log('Email sent successfully via Resend - Message ID:', data?.id);
+      return { messageId: data?.id || 'sent' };
+    }
+
+    throw new Error('No email provider configured (SMTP or Resend)');
   } catch (error) {
+    // eslint-disable-next-line no-console
     console.error('Failed to send email:', error);
     throw new Error(`Email sending failed: ${(error as Error).message}`);
   }
 }
+

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { text-align: center; margin-bottom: 20px; }
+    .content { background: #f9f9f9; padding: 20px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Your Bid Was Not Accepted</h2>
+    </div>
+    <div class="content">
+      <p>The seller has declined your bid.</p>
+      <ul>
+        <li>Bid reference: {{reference}}</li>
+        <li>Proposed rate: ₦{{proposed_rate_ngn}}</li>
+      </ul>
+      {{#if rejection_reason}}
+      <p>Reason: {{rejection_reason}}</p>
+      {{/if}}
+      <p>Your funds of ₦{{total_ngn_at_bid_rate}} have been released back to your wallet.</p>
+    </div>
+  </div>
+</body>
+</html>

@@ -3,17 +3,19 @@ import request from 'supertest';
 import { LedgerEntry } from '../src/database/entities/LedgerEntry';
 import { Currency } from '../src/utils/enums';
 
-import { app, registerAndLogin } from './helpers';
+import { app, registerVerifiedUser } from './helpers';
 
 describe('Ledger', () => {
   it('returns ledger entries after deposit and ledger rows are immutable (no updates)', async () => {
     process.env.FLUTTERWAVE_WEBHOOK_HASH = 'testhash';
-    const { accessToken, userId } = await registerAndLogin();
+
+    const { accessToken, userId } = await registerVerifiedUser();
 
     const init = await request(app)
       .post('/deposits/ngn/initiate')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ amount: '250.00' });
+    if (init.status !== 201) console.error('LEDGER INIT ERROR:', init.body);
     const reference = init.body.data.deposit.reference as string;
 
     await request(app)

@@ -5,11 +5,11 @@ import { LedgerEntry } from '../src/database/entities/LedgerEntry';
 import { withTransaction } from '../src/database/transaction';
 import { Currency, DepositStatus } from '../src/utils/enums';
 
-import { app, makeAdmin, registerAndLogin } from './helpers';
+import { app, makeAdmin, registerVerifiedUser } from './helpers';
 
 describe('Deposits', () => {
   it('initiates NGN deposit', async () => {
-    const { accessToken } = await registerAndLogin();
+    const { accessToken } = await registerVerifiedUser();
     const res = await request(app)
       .post('/deposits/ngn/initiate')
       .set('Authorization', `Bearer ${accessToken}`)
@@ -22,7 +22,7 @@ describe('Deposits', () => {
   it('processes Flutterwave webhook: credits wallet, creates ledger, prevents duplicates', async () => {
     process.env.FLUTTERWAVE_WEBHOOK_HASH = 'testhash';
 
-    const { accessToken, userId } = await registerAndLogin();
+    const { accessToken, userId } = await registerVerifiedUser();
     const init = await request(app)
       .post('/deposits/ngn/initiate')
       .set('Authorization', `Bearer ${accessToken}`)
@@ -77,7 +77,7 @@ describe('Deposits', () => {
     // Skip if Cloudinary not configured for this environment.
     if (!process.env.CLOUDINARY_URL) return;
 
-    const user = await registerAndLogin();
+    const user = await registerVerifiedUser();
 
     const submit = await request(app)
       .post('/deposits/foreign')
@@ -88,7 +88,7 @@ describe('Deposits', () => {
     expect(submit.status).toBe(201);
     expect(submit.body.data.deposit.status).toBe(DepositStatus.pending_review);
 
-    const admin = await registerAndLogin();
+    const admin = await registerVerifiedUser();
     await makeAdmin(admin.userId);
 
     const before = await withTransaction(async (qr) => {

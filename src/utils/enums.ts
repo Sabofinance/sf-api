@@ -77,6 +77,14 @@ export enum NotificationStatus {
   read = 'read',
 }
 
+export enum BidStatus {
+  pending = 'pending',
+  accepted = 'accepted',
+  rejected = 'rejected',
+  expired = 'expired',
+  withdrawn = 'withdrawn',
+}
+
 export enum NotificationType {
   info = 'info',
   success = 'success',

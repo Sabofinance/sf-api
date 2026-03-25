@@ -9,6 +9,7 @@ import { User } from '../../database/entities/User';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
 import { NotificationService } from '../../services/notificationService';
+import { requirePinSet, verifyPin } from '../../services/pinService';
 import { nextReference } from '../../services/referenceService';
 import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
@@ -18,9 +19,14 @@ import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 const initiateSchema = z.object({
   sabit_id: z.string().uuid(),
   amount: z.string().regex(/^\d+(\.\d{1,2})?$/),
+  pin: z.string().length(6).regex(/^\d{6}$/, 'PIN must be 6 digits'),
 });
 
 const idSchema = z.object({ id: z.string().uuid() });
+
+const sellerConfirmSchema = z.object({
+  pin: z.string().length(6).regex(/^\d{6}$/, 'PIN must be 6 digits'),
+});
 
 /**
  * @swagger
@@ -70,6 +76,14 @@ export async function initiateTrade(req: Request, res: Response) {
       throw new AppError('SELF_TRADE_NOT_ALLOWED', 'You cannot trade with yourself', 400);
     }
 
+    await requirePinSet(buyerId, qr);
+    await requirePinSet(sellerId, qr, 'The seller has not set a transaction PIN. This trade cannot proceed.');
+
+    const pinValid = await verifyPin(buyerId, input.pin, qr);
+    if (!pinValid) {
+      throw new AppError('INVALID_PIN', 'Incorrect transaction PIN', 401);
+    }
+
     const newAvailableAmount = new Decimal(sabit.available_amount).minus(amount);
     await qr.query(`UPDATE "sabits" SET "available_amount" = $1 WHERE "id" = $2`, [
       newAvailableAmount.toFixed(2),
@@ -80,8 +94,8 @@ export async function initiateTrade(req: Request, res: Response) {
     const totalNgn = amount.times(new Decimal(sabit.rate_ngn));
 
     const tradeRows = (await qr.query(
-      `INSERT INTO "trades" ("id","sabit_id","buyer_id","seller_id","currency","amount","rate_ngn","total_ngn","reference")
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO "trades" ("id","sabit_id","buyer_id","seller_id","currency","amount","rate_ngn","total_ngn","reference", "buyer_pin_verified", "pin_expires_at", "seller_notified_at")
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, true, NOW() + INTERVAL '10 minutes', NOW())
        RETURNING *`,
       [sabit.id, buyerId, sellerId, sabit.currency, input.amount, sabit.rate_ngn, totalNgn.toFixed(2), reference],
     )) as Trade[];
@@ -102,15 +116,105 @@ export async function initiateTrade(req: Request, res: Response) {
         queryRunner: qr,
         userId: trade.seller_id,
         title: 'New Trade Request',
-        message: `You have a new trade request for ${trade.amount} ${trade.currency}.`,
+        message: `A buyer wants to trade ${trade.amount} ${trade.currency} at ₦${trade.rate_ngn}. You have 10 minutes to confirm.`,
         type: NotificationType.info,
         relatedId: trade.id,
     });
+
+    const sellerRows = await qr.query(`SELECT email FROM users WHERE id = $1`, [trade.seller_id]);
+    if (sellerRows.length > 0) {
+      await sendEmail({
+        to: sellerRows[0].email,
+        subject: 'Action Required — New Trade Request',
+        template: 'trade-initiated-seller',
+        context: {
+          reference: trade.reference,
+          currency: trade.currency,
+          amount: trade.amount,
+          rate_ngn: trade.rate_ngn
+        }
+      });
+    }
 
     return trade;
   });
 
   return created(res, { trade });
+}
+
+export async function sellerConfirmTrade(req: Request, res: Response) {
+  if (!req.user) throw new UnauthorizedError();
+  const { id } = idSchema.parse(req.params);
+  const { pin } = sellerConfirmSchema.parse(req.body);
+
+  await withTransaction(async (qr) => {
+    const tradeRows = (await qr.query(
+      `SELECT * FROM "trades" WHERE "id" = $1 FOR UPDATE`,
+      [id],
+    )) as Trade[];
+    const trade = tradeRows[0];
+
+    if (!trade) throw new NotFoundError('Trade not found');
+    if (trade.seller_id !== req.user!.id) throw new UnauthorizedError('You are not the seller for this trade');
+    
+    // Legacy trades are initiated or escrowed, but we'll accept both to be safe
+    if (trade.status !== TradeStatus.escrowed && trade.status !== TradeStatus.initiated) {
+      throw new AppError('INVALID_TRADE_STATE', 'Trade is not awaiting seller confirmation', 400);
+    }
+
+    if (trade.pin_expires_at && new Date() > trade.pin_expires_at) {
+      // Auto-cancel
+      await qr.query(`UPDATE "trades" SET "status" = $1 WHERE "id" = $2`, [TradeStatus.cancelled, id]);
+      
+      const sabitRows = (await qr.query(`SELECT * FROM "sabits" WHERE "id" = $1 FOR UPDATE`, [trade.sabit_id])) as Sabit[];
+      if (sabitRows.length > 0) {
+        const sabit = sabitRows[0];
+        const restoredAmount = new Decimal(sabit.available_amount).plus(new Decimal(trade.amount));
+        await qr.query(`UPDATE "sabits" SET "available_amount" = $1 WHERE "id" = $2`, [restoredAmount.toFixed(2), sabit.id]);
+      }
+      
+      const buyerRows = await qr.query(`SELECT email FROM users WHERE id = $1`, [trade.buyer_id]);
+      if (buyerRows.length > 0) {
+        await sendEmail({
+          to: buyerRows[0].email,
+          subject: 'Trade Cancelled — PIN Expired',
+          template: 'pin-expired-cancellation',
+          context: { reference: trade.reference }
+        });
+      }
+      
+      const sellerRows = await qr.query(`SELECT email FROM users WHERE id = $1`, [trade.seller_id]);
+      if (sellerRows.length > 0) {
+        await sendEmail({
+          to: sellerRows[0].email,
+          subject: 'Trade Cancelled — PIN Expired',
+          template: 'pin-expired-cancellation',
+          context: { reference: trade.reference }
+        });
+      }
+
+      throw new AppError('PIN_EXPIRED', 'The 10-minute confirmation window has expired. This trade has been cancelled.', 400);
+    }
+
+    const pinValid = await verifyPin(trade.seller_id, pin, qr);
+    if (!pinValid) {
+      throw new AppError('INVALID_PIN', 'Incorrect transaction PIN', 401);
+    }
+
+    await qr.query(`UPDATE "trades" SET "seller_pin_verified" = true, "status" = $1 WHERE "id" = $2`, [TradeStatus.confirmed, id]);
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: trade.buyer_id,
+      title: 'Trade Confirmed',
+      message: 'The seller has confirmed the trade. Payment is now in progress.',
+      type: NotificationType.success,
+      relatedId: trade.id,
+    });
+  });
+
+  return ok(res, { message: 'Trade confirmed successfully' });
 }
 
 /**
@@ -147,8 +251,8 @@ export async function confirmTrade(req: Request, res: Response) {
 
     if (!trade) throw new NotFoundError('Trade not found');
     if (trade.seller_id !== req.user!.id) throw new UnauthorizedError('You are not the seller for this trade');
-    if (trade.status !== TradeStatus.initiated) {
-      throw new AppError('INVALID_STATUS', 'Only initiated trades can be confirmed', 400);
+    if (trade.status !== TradeStatus.initiated && trade.status !== TradeStatus.confirmed) {
+      throw new AppError('INVALID_STATUS', 'Only initiated or confirmed trades can be confirmed', 400);
     }
 
     // Move funds from locked to escrow
@@ -304,22 +408,22 @@ export async function completeTrade(req: Request, res: Response) {
     const emailContext = {
         amount: trade.amount,
         currency: trade.currency,
-        rate: trade.rate_ngn,
-        totalNgn: trade.total_ngn,
+        rate_ngn: trade.rate_ngn,
+        total_ngn: trade.total_ngn,
         reference: trade.reference,
     };
 
     await sendEmail({
         to: buyer[0].email,
-        subject: 'Trade Completed',
-        template: 'trade-completion',
+        subject: `Trade Completed — ${trade.reference}`,
+        template: 'trade-completed-buyer',
         context: { ...emailContext, name: buyer[0].name },
     });
 
     await sendEmail({
         to: seller[0].email,
-        subject: 'Trade Completed',
-        template: 'trade-completion',
+        subject: `Trade Completed — ${trade.reference}`,
+        template: 'trade-completed-seller',
         context: { ...emailContext, name: seller[0].name },
     });
   });

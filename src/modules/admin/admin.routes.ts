@@ -17,6 +17,7 @@ import {
   approveKyc,
   rejectKyc,
   getDashboardStats,
+  getImpactAnalytics,
   listAllDeposits,
   listAllDisputes,
   listAllTransactions,
@@ -46,8 +47,9 @@ adminRouter.post('/kyc/:id/reject', asyncHandler(rejectKyc));
 adminRouter.post('/deposits/:id/approve', asyncHandler(approveDeposit));
 adminRouter.post('/deposits/:id/reject', asyncHandler(rejectDeposit));
 
-// Dashboard
+// Dashboard & Analytics
 adminRouter.get('/dashboard', asyncHandler(getDashboardStats));
+adminRouter.get('/analytics/impact', asyncHandler(getImpactAnalytics));
 adminRouter.get('/deposits', asyncHandler(listAllDeposits));
 adminRouter.get('/disputes', asyncHandler(listAllDisputes));
 adminRouter.get('/transactions', asyncHandler(listAllTransactions));

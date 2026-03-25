@@ -28,11 +28,11 @@ describe('Auth', () => {
     expect(await bcrypt.compare(password, row.password_hash)).toBe(true);
   });
 
-  it('logs in and returns access token', async () => {
+  it('logs in and returns OTP message', async () => {
     const { email, password } = await registerAndLogin();
     const res = await request(app).post('/auth/login').send({ email, password });
     expect(res.status).toBe(200);
-    expect(res.body.data.tokens.accessToken).toBeTruthy();
+    expect(res.body.data.message).toBe('An OTP has been sent to your email.');
   });
 
   it('rejects invalid credentials', async () => {

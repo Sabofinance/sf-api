@@ -2,7 +2,7 @@ import { QueryRunner } from 'typeorm';
 
 import { AppError } from '../utils/errors';
 
-type ReferenceScope = 'DEP' | 'TXN' | 'WDR';
+type ReferenceScope = 'DEP' | 'TXN' | 'WDR' | 'BID';
 
 export async function nextReference(queryRunner: QueryRunner, scope: ReferenceScope, now = new Date()) {
   const year = now.getUTCFullYear();

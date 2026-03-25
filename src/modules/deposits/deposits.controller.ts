@@ -65,7 +65,7 @@ export async function initiateNgnDeposit(req: Request, res: Response) {
     const init = await provider.initiateDeposit({
       amount: input.amount,
       currency: Currency.NGN,
-      customerEmail: input.email ?? '',
+      customerEmail: input.email ?? req.user!.email,
       reference,
     });
     await qr.query(`UPDATE "deposits" SET "provider_reference" = $1 WHERE "id" = $2`, [

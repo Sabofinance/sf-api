@@ -2,17 +2,19 @@ import { DataSource } from 'typeorm';
 
 import { AdminLog } from './entities/AdminLog';
 import { Beneficiary } from './entities/Beneficiary';
+import { Bid } from './entities/Bid';
 import { Deposit } from './entities/Deposit';
 import { Dispute } from './entities/Dispute';
 import { ExchangeRate } from './entities/ExchangeRate';
 import { Kyc } from './entities/Kyc';
 import { LedgerEntry } from './entities/LedgerEntry';
+import { Notifications } from './entities/Notifications';
 import { Sabit } from './entities/Sabit';
 import { Trade } from './entities/Trade';
+import { TradeRating } from './entities/TradeRating';
 import { User } from './entities/User';
 import { Wallet } from './entities/Wallet';
 import { Withdrawal } from './entities/Withdrawal';
-import { Notifications } from './entities/Notifications';
 
 
 const isTest = process.env.NODE_ENV === 'test';
@@ -38,11 +40,13 @@ export const AppDataSource = new DataSource({
     Kyc,
     AdminLog,
     Beneficiary,
+    Bid,
     Withdrawal,
     Sabit,
     Trade,
     Dispute,
     Notifications,
+    TradeRating,
   ],
   migrations: [
     process.env.NODE_ENV === 'production'
