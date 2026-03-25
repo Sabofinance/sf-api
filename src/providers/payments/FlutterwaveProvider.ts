@@ -52,7 +52,8 @@ export class FlutterwaveProvider implements PaymentProvider {
   }
 
   async handleWebhook(rawBody: any, headers: Record<string, string | string[] | undefined>): Promise<WebhookResult> {
-    const expected = env.FLUTTERWAVE_WEBHOOK_HASH;
+    // Prefer live process.env so tests and webhooks can set the hash without reloading parsed env.
+    const expected = process.env.FLUTTERWAVE_WEBHOOK_HASH ?? env.FLUTTERWAVE_WEBHOOK_HASH;
     const received = headers['verif-hash'];
     const receivedVal = Array.isArray(received) ? received[0] : received;
 
