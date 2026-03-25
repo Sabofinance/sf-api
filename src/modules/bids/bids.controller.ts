@@ -34,6 +34,29 @@ const rejectBidSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
+/**
+ * @swagger
+ * /bids:
+ *   post:
+ *     summary: Place a bid on a SELL sabit
+ *     tags: [Bids]
+ *     security: [{ BearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [sabit_id, amount, proposed_rate_ngn, pin]
+ *             properties:
+ *               sabit_id: { type: string, format: uuid }
+ *               amount: { type: string, example: "100.00" }
+ *               proposed_rate_ngn: { type: string, example: "1500.00" }
+ *               pin: { type: string, example: "123456" }
+ *     responses:
+ *       201:
+ *         description: Bid placed
+ */
 export async function placeBid(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
   const input = placeBidSchema.parse(req.body);
@@ -75,7 +98,7 @@ export async function placeBid(req: Request, res: Response) {
     await requirePinSet(buyerId, qr);
     const pinValid = await verifyPin(buyerId, input.pin, qr);
     if (!pinValid) {
-      throw new AppError('INVALID_PIN', 'Incorrect transaction PIN', 401);
+      throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);
     }
 
     const totalNgnAtBidRate = amount.times(proposedRate).toFixed(2);
@@ -207,6 +230,17 @@ export async function getMyBids(req: Request, res: Response) {
   return ok(res, { bids });
 }
 
+/**
+ * @swagger
+ * /bids/received:
+ *   get:
+ *     summary: Get bids received on your listings
+ *     tags: [Bids]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Success
+ */
 export async function getReceivedBids(req: Request, res: Response) {
   const status = req.query.status as string;
   const page = parseInt(req.query.page as string) || 1;
@@ -269,7 +303,7 @@ export async function acceptBid(req: Request, res: Response) {
       throw new AppError('INVALID_BID', 'Bid is not available or already processed', 400);
     }
     if (bid.seller_id !== req.user!.id) {
-      throw new ForbiddenError('You are not the seller for this bid');
+      throw new ForbiddenError('Only the listing seller can respond to this bid.', 'NOT_BID_SELLER');
     }
 
     if (new Date() > new Date(bid.expires_at)) {
@@ -290,7 +324,7 @@ export async function acceptBid(req: Request, res: Response) {
     await requirePinSet(bid.seller_id, qr);
     const pinValid = await verifyPin(bid.seller_id, pin, qr);
     if (!pinValid) {
-      throw new AppError('INVALID_PIN', 'Incorrect transaction PIN', 401);
+      throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);
     }
 
     const sabitRows = await qr.query(`SELECT * FROM "sabits" WHERE "id" = $1 FOR UPDATE`, [bid.sabit_id]) as Sabit[];
@@ -387,6 +421,34 @@ export async function acceptBid(req: Request, res: Response) {
   return ok(res, { trade });
 }
 
+/**
+ * @swagger
+ * /bids/{id}/reject:
+ *   put:
+ *     summary: Reject a pending bid (Seller only)
+ *     tags: [Bids]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [pin]
+ *             properties:
+ *               pin: { type: string, example: "123456" }
+ *               reason: { type: string, example: "Rate too low for current market." }
+ *     responses:
+ *       200:
+ *         description: Bid rejected
+ */
 export async function rejectBid(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
   const { pin, reason } = rejectBidSchema.parse(req.body);
@@ -399,7 +461,7 @@ export async function rejectBid(req: Request, res: Response) {
       throw new AppError('INVALID_BID', 'Bid is not available or already processed', 400);
     }
     if (bid.seller_id !== req.user!.id) {
-      throw new ForbiddenError('You are not the seller for this bid');
+      throw new ForbiddenError('Only the listing seller can respond to this bid.', 'NOT_BID_SELLER');
     }
 
     if (new Date() > new Date(bid.expires_at)) {
@@ -408,7 +470,7 @@ export async function rejectBid(req: Request, res: Response) {
 
     const pinValid = await verifyPin(bid.seller_id, pin, qr);
     if (!pinValid) {
-      throw new AppError('INVALID_PIN', 'Incorrect transaction PIN', 401);
+      throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);
     }
 
     await qr.query(`UPDATE "bids" SET "status" = 'rejected', "seller_responded_at" = NOW(), "rejection_reason" = $2 WHERE "id" = $1`, [bid.id, reason || null]);
@@ -482,7 +544,7 @@ export async function withdrawBid(req: Request, res: Response) {
       throw new AppError('INVALID_BID', 'Bid is not available or already processed', 400);
     }
     if (bid.buyer_id !== req.user!.id) {
-      throw new ForbiddenError('You are not the buyer for this bid');
+      throw new ForbiddenError('Only the buyer who placed this bid can withdraw it.', 'NOT_BID_BUYER');
     }
 
     await qr.query(`UPDATE "bids" SET "status" = 'withdrawn' WHERE "id" = $1`, [bid.id]);

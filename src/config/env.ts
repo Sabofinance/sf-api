@@ -28,6 +28,11 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional(),
   REDIS_HOST: z.string().optional(),
   REDIS_PORT: z.coerce.number().optional(),
+  API_BASE_URL: z.string().url().optional(),
+  WEBSITE_URL: z.string().url().optional(),
+  CONTACT_URL: z.string().url().optional(),
+  HELP_CENTER_URL: z.string().url().optional(),
+  SUPPORT_EMAIL: z.string().email().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

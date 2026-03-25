@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { Sabit } from '../../database/entities/Sabit';
 import { withTransaction } from '../../database/transaction';
+import { requirePinSet } from '../../services/pinService';
 import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
 import { Currency, LedgerType, SabitStatus, SabitType } from '../../utils/enums';
@@ -60,6 +61,7 @@ export async function createSabit(req: Request, res: Response) {
   const sabit = await withTransaction(async (qr) => {
     // Lock funds based on sabit type
     if (input.type === SabitType.SELL) {
+      await requirePinSet(req.user!.id, qr, 'You must set a transaction PIN before creating a SELL sabit');
       // Seller is selling foreign currency, so lock their foreign currency wallet
       await walletService.lock({
         queryRunner: qr,
@@ -160,7 +162,7 @@ export async function getSabit(req: Request, res: Response) {
   const sabit = await withTransaction(async (qr) => {
     const rows = (await qr.query(`SELECT * FROM "sabits" WHERE "id" = $1`, [id])) as Sabit[];
     if (rows.length === 0) {
-      throw new NotFoundError('Sabit not found');
+      throw new NotFoundError('No listing exists with that ID.', 'SABIT_NOT_FOUND');
     }
     return rows[0];
   });
@@ -199,9 +201,9 @@ export async function cancelSabit(req: Request, res: Response) {
     )) as Sabit[];
     const sabit = sabitRows[0];
 
-    if (!sabit) throw new NotFoundError('Sabit not found');
+    if (!sabit) throw new NotFoundError('No listing exists with that ID on your account.', 'SABIT_NOT_FOUND');
     if (sabit.status !== SabitStatus.active) {
-      throw new AppError('INVALID_STATUS', 'Only active sabits can be cancelled', 400);
+      throw new AppError('INVALID_STATUS', 'Only active listings can be cancelled.', 400);
     }
 
     // Unlock the remaining available amount

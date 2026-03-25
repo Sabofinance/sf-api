@@ -17,6 +17,7 @@ export function createSwaggerSpec() {
       ],
       tags: [
         { name: 'Auth' },
+        { name: 'Account' },
         { name: 'Wallets' },
         { name: 'Ledger' },
         { name: 'Deposits' },

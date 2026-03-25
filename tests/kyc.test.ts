@@ -1,6 +1,6 @@
 import request from 'supertest';
 
-import { app, registerAndLogin } from './helpers';
+import { app, MIN_VALID_PNG, registerAndLogin } from './helpers';
 
 describe('KYC', () => {
   it('returns kyc status for user', async () => {
@@ -17,8 +17,8 @@ describe('KYC', () => {
       .post('/kyc/upload')
       .set('Authorization', `Bearer ${accessToken}`)
       .field('document_type', 'passport')
-      .attach('document', Buffer.from('fake'), { filename: 'doc.png', contentType: 'image/png' })
-      .attach('selfie', Buffer.from('fake'), { filename: 'selfie.png', contentType: 'image/png' });
+      .attach('document', MIN_VALID_PNG, { filename: 'doc.png', contentType: 'image/png' })
+      .attach('selfie', MIN_VALID_PNG, { filename: 'selfie.png', contentType: 'image/png' });
     expect(res.status).toBe(201);
     expect(res.body.data.kyc.status).toBe('pending');
   });

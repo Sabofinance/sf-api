@@ -9,6 +9,7 @@ import { ExchangeRate } from './entities/ExchangeRate';
 import { Kyc } from './entities/Kyc';
 import { LedgerEntry } from './entities/LedgerEntry';
 import { Notifications } from './entities/Notifications';
+import { AdminInvite } from './entities/AdminInvite';
 import { Sabit } from './entities/Sabit';
 import { Trade } from './entities/Trade';
 import { TradeRating } from './entities/TradeRating';
@@ -39,6 +40,7 @@ export const AppDataSource = new DataSource({
     ExchangeRate,
     Kyc,
     AdminLog,
+    AdminInvite,
     Beneficiary,
     Bid,
     Withdrawal,

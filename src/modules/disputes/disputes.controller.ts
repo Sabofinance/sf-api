@@ -6,7 +6,7 @@ import { Trade } from '../../database/entities/Trade';
 import { withTransaction } from '../../database/transaction';
 import { created, ok } from '../../utils/apiResponse';
 import { TradeStatus } from '../../utils/enums';
-import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
+import { AppError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 
 const raiseDisputeSchema = z.object({
   trade_id: z.string().uuid(),
@@ -50,12 +50,16 @@ export async function raiseDispute(req: Request, res: Response) {
     )) as Trade[];
     const trade = tradeRows[0];
 
-    if (!trade) throw new NotFoundError('Trade not found');
+    if (!trade) throw new NotFoundError('No trade exists with that ID.', 'TRADE_NOT_FOUND');
     if (trade.buyer_id !== req.user!.id && trade.seller_id !== req.user!.id) {
-      throw new UnauthorizedError('You are not a party to this trade');
+      throw new ForbiddenError('Only the buyer or seller can open a dispute for this trade.', 'NOT_TRADE_PARTY');
     }
     if (trade.status !== TradeStatus.escrowed && trade.status !== TradeStatus.confirmed) {
-      throw new AppError('INVALID_STATUS', 'Disputes can only be raised on escrowed or confirmed trades', 400);
+      throw new AppError(
+        'INVALID_STATUS',
+        'Disputes can only be opened while the trade is in escrow or confirmed (not completed or cancelled).',
+        400,
+      );
     }
 
     // Update trade status to disputed
@@ -132,7 +136,7 @@ export async function getDispute(req: Request, res: Response) {
     )) as Dispute[];
 
     if (disputeRows.length === 0) {
-        throw new NotFoundError('Dispute not found or you do not have access');
+        throw new NotFoundError('No dispute with that ID was found on your account.', 'DISPUTE_NOT_FOUND');
     }
     return disputeRows[0];
   });

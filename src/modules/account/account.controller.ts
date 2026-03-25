@@ -177,3 +177,354 @@ export async function verifyTransactionPin(req: Request, res: Response) {
 
   return ok(res, { isValid });
 }
+
+function generateOtp() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+const accountDeletionInitiateSchema = z.object({
+  password: z.string().min(1, 'Password is required'),
+});
+
+const accountDeletionConfirmSchema = z.object({
+  password: z.string().min(1, 'Password is required'),
+  otp: z.string().length(6).regex(/^\d{6}$/, 'OTP must be 6 digits'),
+});
+
+const emailChangeInitiateSchema = z.object({
+  new_email: z.string().email('Invalid email address'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+const emailChangeConfirmSchema = z.object({
+  new_email: z.string().email('Invalid email address'),
+  otp: z.string().length(6).regex(/^\d{6}$/, 'OTP must be 6 digits'),
+});
+
+/**
+ * @swagger
+ * /account/delete/initiate:
+ *   post:
+ *     summary: Initiate soft account deletion (sends OTP)
+ *     tags: [Account]
+ *     security: [{ BearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [password]
+ *             properties:
+ *               password: { type: string, example: "Password123!" }
+ *     responses:
+ *       200:
+ *         description: OTP sent
+ */
+export async function initiateAccountDeletion(req: Request, res: Response) {
+  const input = accountDeletionInitiateSchema.parse(req.body);
+  const userId = req.user!.id;
+
+  const result = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","name","email","password_hash" 
+       FROM "users" 
+       WHERE "id" = $1 AND "deleted_at" IS NULL 
+       LIMIT 1
+       FOR UPDATE`,
+      [userId],
+    )) as Array<{ id: string; name: string; email: string; password_hash: string }>;
+
+    const user = rows[0];
+    if (!user) throw new AppError('ACCOUNT_NOT_FOUND', 'We could not find an active account for this session.', 404);
+
+    const okPass = await bcrypt.compare(input.password, user.password_hash);
+    if (!okPass) throw new AppError('INVALID_PASSWORD', 'The password you entered is incorrect.', 401);
+
+    const otp = generateOtp();
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
+
+    await qr.query(
+      `UPDATE "users"
+       SET "otp" = $1, "otp_expires" = $2, "otp_purpose" = $3, "otp_target_email" = NULL
+       WHERE "id" = $4`,
+      [otp, otp_expires, 'account-delete', userId],
+    );
+
+    return { name: user.name, email: user.email, otp };
+  });
+
+  await sendEmail({
+    to: result.email,
+    subject: 'Confirm Account Deletion - Sabo Finance',
+    template: 'account-delete-otp',
+    context: { name: result.name, otp: result.otp },
+  });
+
+  return ok(res, { message: 'Deletion OTP sent to your email.' });
+}
+
+/**
+ * @swagger
+ * /account/delete/confirm:
+ *   post:
+ *     summary: Confirm soft account deletion (password + OTP)
+ *     tags: [Account]
+ *     security: [{ BearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [password, otp]
+ *             properties:
+ *               password: { type: string, example: "Password123!" }
+ *               otp: { type: string, example: "123456" }
+ *     responses:
+ *       200:
+ *         description: Account scheduled for deletion
+ */
+export async function confirmAccountDeletion(req: Request, res: Response) {
+  const input = accountDeletionConfirmSchema.parse(req.body);
+  const userId = req.user!.id;
+
+  const result = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","name","email","password_hash","otp","otp_expires","otp_purpose" 
+       FROM "users"
+       WHERE "id" = $1 AND "deleted_at" IS NULL
+       LIMIT 1
+       FOR UPDATE`,
+      [userId],
+    )) as Array<{
+      id: string;
+      name: string;
+      email: string;
+      password_hash: string;
+      otp: string | null;
+      otp_expires: Date | null;
+      otp_purpose: string | null;
+    }>;
+
+    const user = rows[0];
+    if (!user) throw new AppError('ACCOUNT_NOT_FOUND', 'We could not find an active account for this session.', 404);
+
+    const okPass = await bcrypt.compare(input.password, user.password_hash);
+    if (!okPass) throw new AppError('INVALID_PASSWORD', 'The password you entered is incorrect.', 401);
+
+    if (user.otp_purpose !== 'account-delete')
+      throw new AppError('OTP_INVALID_PURPOSE', 'This code is not for account deletion. Start the deletion flow again from settings.', 400);
+    if (!user.otp || !user.otp_expires)
+      throw new AppError('OTP_NOT_ISSUED', 'No active deletion code found. Request a new OTP from account settings.', 400);
+    if (user.otp_expires <= new Date()) throw new AppError('OTP_EXPIRED', 'This code has expired. Request a new deletion OTP.', 400);
+    if (user.otp !== input.otp) throw new AppError('OTP_INCORRECT', 'The code does not match. Try again or request a new OTP.', 401);
+
+    await qr.query(
+      `UPDATE "users"
+       SET "deleted_at" = now(),
+           "is_suspended" = true,
+           "otp" = NULL,
+           "otp_expires" = NULL,
+           "otp_purpose" = NULL,
+           "otp_target_email" = NULL
+       WHERE "id" = $1`,
+      [userId],
+    );
+
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'ACCOUNT_DELETION_CONFIRMED', 'user', $1, $2, now())`,
+      [userId, JSON.stringify({ email: user.email })],
+    );
+
+    return { name: user.name, email: user.email };
+  });
+
+  await sendEmail({
+    to: result.email,
+    subject: 'Account Deletion Confirmed - Sabo Finance',
+    template: 'account-deletion-confirmed',
+    context: { name: result.name },
+  });
+
+  return ok(res, { message: 'Your account has been deleted (soft delete).' });
+}
+
+/**
+ * @swagger
+ * /account/email-change/initiate:
+ *   post:
+ *     summary: Initiate email change (OTP sent to new email + alert old email)
+ *     tags: [Account]
+ *     security: [{ BearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [new_email, password]
+ *             properties:
+ *               new_email: { type: string, example: "new@example.com" }
+ *               password: { type: string, example: "Password123!" }
+ *     responses:
+ *       200:
+ *         description: OTP sent to new email
+ */
+export async function initiateEmailChange(req: Request, res: Response) {
+  const input = emailChangeInitiateSchema.parse(req.body);
+  const userId = req.user!.id;
+  const newEmail = input.new_email.toLowerCase();
+
+  const result = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","name","email","password_hash" 
+       FROM "users" 
+       WHERE "id" = $1 AND "deleted_at" IS NULL
+       LIMIT 1
+       FOR UPDATE`,
+      [userId],
+    )) as Array<{ id: string; name: string; email: string; password_hash: string }>;
+
+    const user = rows[0];
+    if (!user) throw new AppError('ACCOUNT_NOT_FOUND', 'We could not find an active account for this session.', 404);
+    if (user.email.toLowerCase() === newEmail) throw new AppError('EMAIL_NOT_CHANGED', 'New email must be different from your current email.', 400);
+
+    const existing = await qr.query(`SELECT "id" FROM "users" WHERE "email" = $1 AND "id" != $2 AND "deleted_at" IS NULL LIMIT 1`, [
+      newEmail,
+      userId,
+    ]);
+
+    if ((existing as unknown[]).length > 0) throw new AppError('EMAIL_TAKEN', 'That email is already registered to another account.', 409);
+
+    const okPass = await bcrypt.compare(input.password, user.password_hash);
+    if (!okPass) throw new AppError('INVALID_PASSWORD', 'The password you entered is incorrect.', 401);
+
+    const otp = generateOtp();
+    const otp_expires = new Date(Date.now() + 10 * 60 * 1000);
+
+    await qr.query(
+      `UPDATE "users"
+       SET "otp" = $1,
+           "otp_expires" = $2,
+           "otp_purpose" = $3,
+           "otp_target_email" = $4
+       WHERE "id" = $5`,
+      [otp, otp_expires, 'email-change', newEmail, userId],
+    );
+
+    return { name: user.name, oldEmail: user.email, newEmail, otp };
+  });
+
+  await sendEmail({
+    to: result.newEmail,
+    subject: 'Verify Your New Email - Sabo Finance',
+    template: 'email-change-otp',
+    context: { name: result.name, otp: result.otp, oldEmail: result.oldEmail, newEmail: result.newEmail },
+  });
+
+  await sendEmail({
+    to: result.oldEmail,
+    subject: 'Email Change Requested',
+    template: 'email-change-alert',
+    context: { name: result.name, newEmail: result.newEmail },
+  });
+
+  await withTransaction(async (qr) => {
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'EMAIL_CHANGE_INITIATED', 'user', $1, $2, now())`,
+      [userId, JSON.stringify({ newEmail })],
+    );
+  });
+
+  return ok(res, { message: 'OTP sent to your new email.' });
+}
+
+/**
+ * @swagger
+ * /account/email-change/confirm:
+ *   post:
+ *     summary: Confirm email change using OTP
+ *     tags: [Account]
+ *     security: [{ BearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [new_email, otp]
+ *             properties:
+ *               new_email: { type: string, example: "new@example.com" }
+ *               otp: { type: string, example: "123456" }
+ *     responses:
+ *       200:
+ *         description: Email changed successfully
+ */
+export async function confirmEmailChange(req: Request, res: Response) {
+  const input = emailChangeConfirmSchema.parse(req.body);
+  const userId = req.user!.id;
+  const newEmail = input.new_email.toLowerCase();
+
+  const result = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","name","email","otp","otp_expires","otp_purpose","otp_target_email" 
+       FROM "users"
+       WHERE "id" = $1 AND "deleted_at" IS NULL
+       LIMIT 1
+       FOR UPDATE`,
+      [userId],
+    )) as Array<{
+      id: string;
+      name: string;
+      email: string;
+      otp: string | null;
+      otp_expires: Date | null;
+      otp_purpose: string | null;
+      otp_target_email: string | null;
+    }>;
+
+    const user = rows[0];
+    if (!user) throw new AppError('ACCOUNT_NOT_FOUND', 'We could not find an active account for this session.', 404);
+
+    if (user.otp_purpose !== 'email-change')
+      throw new AppError('OTP_INVALID_PURPOSE', 'This code is not for an email change. Start the email change flow again.', 400);
+    if (!user.otp || !user.otp_expires || !user.otp_target_email)
+      throw new AppError('OTP_NOT_ISSUED', 'No active email-change code found. Request a new OTP to your new address.', 400);
+    if (user.otp_expires <= new Date()) throw new AppError('OTP_EXPIRED', 'This code has expired. Request a new OTP to your new email.', 400);
+    if (user.otp_target_email.toLowerCase() !== newEmail)
+      throw new AppError('EMAIL_MISMATCH', 'The email you entered does not match the pending change. Use the same address you requested.', 400);
+    if (user.otp !== input.otp) throw new AppError('OTP_INCORRECT', 'The code does not match. Try again or request a new OTP.', 401);
+
+    await qr.query(
+      `UPDATE "users"
+       SET "email" = $1,
+           "email_verified" = true,
+           "otp" = NULL,
+           "otp_expires" = NULL,
+           "otp_purpose" = NULL,
+           "otp_target_email" = NULL
+       WHERE "id" = $2`,
+      [newEmail, userId],
+    );
+
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'EMAIL_CHANGE_CONFIRMED', 'user', $1, $2, now())`,
+      [userId, JSON.stringify({ email: newEmail })],
+    );
+
+    return { name: user.name, email: newEmail };
+  });
+
+  await sendEmail({
+    to: result.email,
+    subject: 'Email Updated Successfully - Sabo Finance',
+    template: 'email-change-confirmed',
+    context: { name: result.name },
+  });
+
+  return ok(res, { message: 'Email changed successfully.' });
+}

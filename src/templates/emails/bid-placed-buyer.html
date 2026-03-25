@@ -1,27 +1,27 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { text-align: center; margin-bottom: 20px; }
-    .content { background: #f9f9f9; padding: 20px; border-radius: 5px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h2>Your Bid Has Been Placed</h2>
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:24px;background:#f5f7f3;font-family:Arial,sans-serif;color:#10212b;">
+    <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e2e9da;border-radius:16px;overflow:hidden;">
+      <div style="background:linear-gradient(120deg,#0a1e28,#173746);padding:26px;border-bottom:4px solid #c8f032;color:#fff;font-size:24px;font-weight:700;">
+        Bid placed
+      </div>
+      <div style="padding:24px;line-height:1.7;font-size:15px;">
+        <div style="margin-bottom:12px;">
+          Hi — your bid has been submitted successfully. The seller will review and respond shortly.
+        </div>
+        <div style="background:#f4fbd7;border:1px solid #dff187;border-radius:12px;padding:14px;">
+          Reference: <strong>{{reference}}</strong><br/>
+          Rate: <strong>NGN {{proposed_rate_ngn}}</strong><br/>
+          Amount: <strong>{{amount}} {{currency}}</strong><br/>
+          Locked amount: <strong>NGN {{total_ngn_at_bid_rate}}</strong>
+        </div>
+        <div style="margin-top:14px;background:#f7faf2;border-left:3px solid #0a1e28;padding:12px;font-size:13px;color:#425247;">
+          Your NGN funds are locked in escrow until the seller accepts or the bid expires. No action is required from you right now.
+        </div>
+        <div style="margin-top:12px;font-size:12px;color:#8a9a80;">
+          If you didn’t place this bid, contact support immediately.
+        </div>
+      </div>
     </div>
-    <div class="content">
-      <p>Your bid has been submitted successfully.</p>
-      <ul>
-        <li>Bid reference: {{reference}}</li>
-        <li>Proposed rate: ₦{{proposed_rate_ngn}}</li>
-        <li>Amount: {{amount}} {{currency}}</li>
-      </ul>
-      <p>Your funds of ₦{{total_ngn_at_bid_rate}} are held pending the seller's response.</p>
-    </div>
-  </div>
-</body>
+  </body>
 </html>

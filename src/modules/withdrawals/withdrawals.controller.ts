@@ -57,7 +57,7 @@ export async function requestWithdrawal(req: Request, res: Response) {
 
     const beneficiary = beneficiaryRows[0];
     if (!beneficiary) {
-      throw new NotFoundError('Beneficiary not found');
+      throw new NotFoundError('No saved beneficiary matches that ID on your account.', 'BENEFICIARY_NOT_FOUND');
     }
 
     const reference = await nextReference(qr, 'WDR');
@@ -164,7 +164,7 @@ export async function getWithdrawal(req: Request, res: Response) {
       req.user!.id,
     ])) as Withdrawal[];
     if (rows.length === 0) {
-      throw new NotFoundError('Withdrawal not found');
+      throw new NotFoundError('No withdrawal request matches that reference on your account.', 'WITHDRAWAL_NOT_FOUND');
     }
     return rows[0];
   });

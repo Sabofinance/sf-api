@@ -67,7 +67,7 @@ export async function getWallet(req: Request, res: Response) {
     )) as Array<Record<string, unknown>>;
     return rows[0] ?? null;
   });
-  if (!wallet) throw new NotFoundError('Wallet not found');
+  if (!wallet) throw new NotFoundError('You do not have a wallet for that currency yet.', 'WALLET_NOT_FOUND');
   return ok(res, { wallet });
 }
 

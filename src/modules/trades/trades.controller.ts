@@ -14,7 +14,7 @@ import { nextReference } from '../../services/referenceService';
 import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
 import { Currency, LedgerType, SabitType, TradeStatus, NotificationType } from '../../utils/enums';
-import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
+import { AppError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 
 const initiateSchema = z.object({
   sabit_id: z.string().uuid(),
@@ -64,16 +64,20 @@ export async function initiateTrade(req: Request, res: Response) {
     )) as Sabit[];
     const sabit = sabitRows[0];
 
-    if (!sabit) throw new NotFoundError('Sabit not found or is not active');
+    if (!sabit) throw new NotFoundError('That listing is not available or is no longer active.', 'SABIT_NOT_FOUND');
     if (new Decimal(sabit.available_amount).lt(amount)) {
-      throw new AppError('INSUFFICIENT_SABIT_AMOUNT', 'Trade amount exceeds available amount on sabit', 400);
+      throw new AppError(
+        'INSUFFICIENT_SABIT_AMOUNT',
+        'Trade amount is higher than the remaining amount on this listing.',
+        400,
+      );
     }
 
     const buyerId = sabit.type === SabitType.SELL ? req.user!.id : sabit.user_id;
     const sellerId = sabit.type === SabitType.SELL ? sabit.user_id : req.user!.id;
 
     if (buyerId === sellerId) {
-      throw new AppError('SELF_TRADE_NOT_ALLOWED', 'You cannot trade with yourself', 400);
+      throw new AppError('SELF_TRADE_NOT_ALLOWED', 'You cannot open a trade against your own listing.', 400);
     }
 
     await requirePinSet(buyerId, qr);
@@ -81,7 +85,7 @@ export async function initiateTrade(req: Request, res: Response) {
 
     const pinValid = await verifyPin(buyerId, input.pin, qr);
     if (!pinValid) {
-      throw new AppError('INVALID_PIN', 'Incorrect transaction PIN', 401);
+      throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);
     }
 
     const newAvailableAmount = new Decimal(sabit.available_amount).minus(amount);
@@ -142,6 +146,31 @@ export async function initiateTrade(req: Request, res: Response) {
   return created(res, { trade });
 }
 
+/**
+ * @swagger
+ * /trades/{id}/seller-confirm:
+ *   put:
+ *     summary: Seller confirms trade with PIN within 10 minutes
+ *     tags: [Trades]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [pin]
+ *             properties:
+ *               pin: { type: string, example: "123456" }
+ *     responses:
+ *       200:
+ *         description: Trade confirmed by seller
+ */
 export async function sellerConfirmTrade(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
   const { id } = idSchema.parse(req.params);
@@ -154,12 +183,17 @@ export async function sellerConfirmTrade(req: Request, res: Response) {
     )) as Trade[];
     const trade = tradeRows[0];
 
-    if (!trade) throw new NotFoundError('Trade not found');
-    if (trade.seller_id !== req.user!.id) throw new UnauthorizedError('You are not the seller for this trade');
+    if (!trade) throw new NotFoundError('No trade exists with that ID.', 'TRADE_NOT_FOUND');
+    if (trade.seller_id !== req.user!.id)
+      throw new ForbiddenError('Only the seller assigned to this trade can confirm it.', 'NOT_TRADE_SELLER');
     
     // Legacy trades are initiated or escrowed, but we'll accept both to be safe
     if (trade.status !== TradeStatus.escrowed && trade.status !== TradeStatus.initiated) {
-      throw new AppError('INVALID_TRADE_STATE', 'Trade is not awaiting seller confirmation', 400);
+      throw new AppError(
+        'INVALID_TRADE_STATE',
+        'This trade is not waiting for seller confirmation in its current state.',
+        400,
+      );
     }
 
     if (trade.pin_expires_at && new Date() > trade.pin_expires_at) {
@@ -198,7 +232,7 @@ export async function sellerConfirmTrade(req: Request, res: Response) {
 
     const pinValid = await verifyPin(trade.seller_id, pin, qr);
     if (!pinValid) {
-      throw new AppError('INVALID_PIN', 'Incorrect transaction PIN', 401);
+      throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);
     }
 
     await qr.query(`UPDATE "trades" SET "seller_pin_verified" = true, "status" = $1 WHERE "id" = $2`, [TradeStatus.confirmed, id]);
@@ -249,10 +283,15 @@ export async function confirmTrade(req: Request, res: Response) {
     )) as Trade[];
     const trade = tradeRows[0];
 
-    if (!trade) throw new NotFoundError('Trade not found');
-    if (trade.seller_id !== req.user!.id) throw new UnauthorizedError('You are not the seller for this trade');
+    if (!trade) throw new NotFoundError('No trade exists with that ID.', 'TRADE_NOT_FOUND');
+    if (trade.seller_id !== req.user!.id)
+      throw new ForbiddenError('Only the seller assigned to this trade can confirm it.', 'NOT_TRADE_SELLER');
     if (trade.status !== TradeStatus.initiated && trade.status !== TradeStatus.confirmed) {
-      throw new AppError('INVALID_STATUS', 'Only initiated or confirmed trades can be confirmed', 400);
+      throw new AppError(
+        'INVALID_STATUS',
+        'Seller confirmation is only allowed when the trade is initiated or already confirmed.',
+        400,
+      );
     }
 
     // Move funds from locked to escrow
@@ -321,10 +360,11 @@ export async function completeTrade(req: Request, res: Response) {
     )) as Trade[];
     const trade = tradeRows[0];
 
-    if (!trade) throw new NotFoundError('Trade not found');
-    if (trade.seller_id !== req.user!.id) throw new UnauthorizedError('You are not the seller for this trade');
+    if (!trade) throw new NotFoundError('No trade exists with that ID.', 'TRADE_NOT_FOUND');
+    if (trade.seller_id !== req.user!.id)
+      throw new ForbiddenError('Only the seller assigned to this trade can confirm it.', 'NOT_TRADE_SELLER');
     if (trade.status !== TradeStatus.escrowed) {
-      throw new AppError('INVALID_STATUS', 'Only escrowed trades can be completed', 400);
+      throw new AppError('INVALID_STATUS', 'Completion is only allowed when funds are in escrow for this trade.', 400);
     }
 
     // Settle the trade

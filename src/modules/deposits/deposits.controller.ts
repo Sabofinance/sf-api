@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
@@ -121,8 +122,8 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
 
     const data = req.body?.data ?? {};
     const reference = (data?.tx_ref ?? data?.reference ?? '') as string;
-    const currency = (data?.currency ?? '') as string;
-    const amount = String(data?.amount ?? '');
+    const currency = String(data?.currency ?? '').toUpperCase();
+    const webhookAmountRaw = data?.amount;
 
     if (!reference) return ok(res, { received: true });
 
@@ -136,8 +137,13 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
       if (!dep) return;
 
       if (dep.status === DepositStatus.completed) return;
-      if (String(dep.currency) !== currency) throw new AppError('CURRENCY_MISMATCH', 'Currency mismatch', 400);
-      if (String(dep.amount) !== amount) throw new AppError('AMOUNT_MISMATCH', 'Amount mismatch', 400);
+      const depCurrency = String(dep.currency).toUpperCase();
+      if (depCurrency !== currency)
+        throw new AppError('CURRENCY_MISMATCH', 'Payment currency does not match the deposit record you are completing.', 400);
+      const depAmt = new Decimal(String(dep.amount));
+      const paidAmt = new Decimal(String(webhookAmountRaw ?? 0));
+      if (!depAmt.equals(paidAmt))
+        throw new AppError('AMOUNT_MISMATCH', 'Payment amount does not match the deposit amount on file.', 400);
 
       await walletService.credit({
         queryRunner: qr,
@@ -247,7 +253,7 @@ export async function getDeposit(req: Request, res: Response) {
     ])) as Array<Record<string, unknown>>;
     return rows[0] ?? null;
   });
-  if (!deposit) throw new NotFoundError('Deposit not found');
+  if (!deposit) throw new NotFoundError('No deposit request matches that ID on your account.', 'DEPOSIT_NOT_FOUND');
   return ok(res, { deposit });
 }
 
@@ -281,7 +287,7 @@ export async function submitForeignDeposit(req: Request, res: Response) {
 
   const input = foreignDepositSchema.parse(req.body);
   const file = req.file as Express.Multer.File | undefined;
-  if (!file) throw new AppError('PROOF_REQUIRED', 'Proof file is required', 400);
+  if (!file) throw new AppError('PROOF_REQUIRED', 'Attach a clear proof-of-payment image or PDF.', 400);
 
   if (!cloudinary.config().cloud_name) {
     throw new AppError('CONFIG_ERROR', 'CLOUDINARY_URL is required for proof uploads', 500);

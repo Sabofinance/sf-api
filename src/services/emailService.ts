@@ -5,6 +5,7 @@ import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 
 import { env } from '../config/env';
+import { AppError } from '../utils/errors';
 
 const resend = new Resend(env.RESEND_API_KEY || 're_test_key_123');
 
@@ -28,6 +29,49 @@ interface EmailOptions {
   // You can easily extend later: cc, bcc, attachments, replyTo, etc.
 }
 
+function buildSharedEmailContext(context?: Record<string, string>): Record<string, string> {
+  const websiteUrl = env.WEBSITE_URL || 'https://sabofinance.com';
+  return {
+    websiteUrl,
+    contactUrl: env.CONTACT_URL || `${websiteUrl}/contact`,
+    helpCenterUrl: env.HELP_CENTER_URL || `${websiteUrl}/help`,
+    supportEmail: env.SUPPORT_EMAIL || 'support@sabofinance.com',
+    appName: 'Sabo Finance',
+    ...context,
+  };
+}
+
+function withStandardFooter(content: string, context: Record<string, string>): string {
+  const footerMarkup = `
+<div style="border-top:1px solid #e8eee2;padding:16px 28px;font-size:12px;color:#5c6b61;">
+  <div style="font-weight:700;color:#10212b;margin-bottom:6px;">{{appName}}</div>
+  <div style="margin-bottom:8px;">Need help? <a href="{{helpCenterUrl}}" style="color:#1e5d45;text-decoration:none;">Help Center</a> · <a href="{{contactUrl}}" style="color:#1e5d45;text-decoration:none;">Contact Us</a> · <a href="mailto:{{supportEmail}}" style="color:#1e5d45;text-decoration:none;">{{supportEmail}}</a></div>
+  <div>Website: <a href="{{websiteUrl}}" style="color:#1e5d45;text-decoration:none;">{{websiteUrl}}</a></div>
+</div>`;
+
+  let normalized = content.replace(/Sabo Finance Security Mailer/g, '{{appName}} Security Mailer');
+  // Remove legacy one-line footers so we do not stack two footers.
+  normalized = normalized.replace(
+    /<div[^>]*class="footer"[^>]*>\s*\{\{appName\}\}\s*Security Mailer\s*<\/div>/gi,
+    '',
+  );
+  const hasRichFooter =
+    normalized.includes('Need help?') &&
+    (normalized.includes('{{helpCenterUrl}}') ||
+      normalized.includes('{{contactUrl}}') ||
+      normalized.includes('{{supportEmail}}'));
+  if (!hasRichFooter) {
+    normalized = normalized.includes('</body>')
+      ? normalized.replace('</body>', `${footerMarkup}\n</body>`)
+      : `${normalized}\n${footerMarkup}`;
+  }
+
+  Object.entries(context).forEach(([key, value]) => {
+    normalized = normalized.replace(new RegExp(`{{${key}}}`, 'g'), value);
+  });
+  return normalized;
+}
+
 export async function sendEmail(options: EmailOptions): Promise<{ messageId: string }> {
   if (process.env.NODE_ENV === 'test') {
     // eslint-disable-next-line no-console
@@ -36,6 +80,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
   }
 
   let { html, text, template, context } = options;
+  const sharedContext = buildSharedEmailContext(context);
 
   if (template) {
     // Determine the correct path based on whether we're running compiled code or ts-node
@@ -56,12 +101,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
         content = await fs.readFile(fallbackPath, 'utf-8');
       }
       
-      if (context) {
-        Object.entries(context).forEach(([key, value]) => {
-          content = content.replace(new RegExp(`{{${key}}}`, 'g'), value);
-        });
-      }
-      html = content;
+      html = withStandardFooter(content, sharedContext);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error(`Failed to load email template: ${template} at paths ${cwdPath} and ${fallbackPath}`, error);
@@ -79,11 +119,11 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
     console.log(`Subject: ${options.subject}`);
 
     // Extract key data for a cleaner console view
-    if (context && (context.otp || context.resetLink)) {
+    if (sharedContext && (sharedContext.otp || sharedContext.resetLink)) {
       // eslint-disable-next-line no-console
-      if (context.otp) console.log(`OTP: ${context.otp}`);
+      if (sharedContext.otp) console.log(`OTP: ${sharedContext.otp}`);
       // eslint-disable-next-line no-console
-      if (context.resetLink) console.log(`Reset Link: ${context.resetLink}`);
+      if (sharedContext.resetLink) console.log(`Reset Link: ${sharedContext.resetLink}`);
     } else {
       // eslint-disable-next-line no-console
       console.log(`Content: ${text || 'Check templates'}`);
@@ -120,7 +160,7 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
       });
 
       if (error) {
-        throw new Error(`Resend Email sending failed: ${error.message}`);
+        throw new AppError('EMAIL_PROVIDER_ERROR', `Email provider rejected the message: ${error.message}`, 503);
       }
 
       // eslint-disable-next-line no-console
@@ -128,11 +168,12 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
       return { messageId: data?.id || 'sent' };
     }
 
-    throw new Error('No email provider configured (SMTP or Resend)');
+    throw new AppError('EMAIL_NOT_CONFIGURED', 'Email is not configured for this environment (set SMTP or RESEND_API_KEY).', 503);
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Failed to send email:', error);
-    throw new Error(`Email sending failed: ${(error as Error).message}`);
+    if (error instanceof AppError) throw error;
+    throw new AppError('EMAIL_SEND_FAILED', `Email could not be sent: ${(error as Error).message}`, 503);
   }
 }
 

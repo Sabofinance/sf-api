@@ -14,6 +14,12 @@ if (!process.env.DATABASE_URL_TEST) {
 
 export const app = createApp();
 
+/** 1×1 PNG — use in multipart tests when Cloudinary is enabled (avoids “Invalid image file”). */
+export const MIN_VALID_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 beforeAll(async () => {
   // Setup database connection for tests
   // We need to override the DATABASE_URL to use DATABASE_URL_TEST if we're in test mode

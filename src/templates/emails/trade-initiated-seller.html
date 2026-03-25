@@ -1,17 +1,36 @@
-<!DOCTYPE html>
-<html>
-
-<body>
-    <h2>Action Required — New Trade Request</h2>
-    <p>A buyer has initiated a trade against your listing.</p>
-    <ul>
-        <li><strong>Trade reference:</strong> {{reference}}</li>
-        <li><strong>Currency:</strong> {{currency}}</li>
-        <li><strong>Amount:</strong> {{amount}}</li>
-        <li><strong>Rate:</strong> {{rate_ngn}} NGN</li>
-    </ul>
-    <p>You have 10 minutes to confirm this trade using your transaction PIN.</p>
-    <p>If you do not confirm within 10 minutes, the trade will be automatically cancelled.</p>
-</body>
-
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Confirm trade — Sabo Finance</title>
+  </head>
+  <body style="margin:0;padding:24px;background:#f5f7f3;font-family:Arial,Helvetica,sans-serif;color:#10212b;">
+    <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e2e9da;border-radius:16px;overflow:hidden;">
+      <div style="background:linear-gradient(120deg,#0a1e28,#173746);padding:28px;border-bottom:4px solid #c8f032;color:#fff;">
+        <div style="font-size:14px;opacity:0.9;text-transform:uppercase;letter-spacing:0.08em;">Seller — action needed</div>
+        <div style="font-size:26px;font-weight:800;margin-top:8px;line-height:1.2;">A buyer started a trade</div>
+        <div style="margin-top:10px;font-size:15px;line-height:1.55;opacity:0.95;">
+          Review the numbers below. When they look right, confirm with your transaction PIN inside the app.
+        </div>
+      </div>
+      <div style="padding:26px;line-height:1.7;font-size:15px;">
+        <div style="background:#f4fbd7;border:1px solid #dff187;border-radius:12px;padding:16px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.1em;color:#5a6b40;text-transform:uppercase;">Trade snapshot</div>
+          <div style="margin-top:10px;">
+            Reference: <strong>{{reference}}</strong><br/>
+            Currency: <strong>{{currency}}</strong><br/>
+            Amount: <strong>{{amount}}</strong><br/>
+            Rate: <strong>{{rate_ngn}} NGN</strong>
+          </div>
+        </div>
+        <div style="margin-top:18px;padding:14px;background:#f7faf2;border-left:3px solid #0a1e28;border-radius:0 10px 10px 0;font-size:13px;color:#425247;">
+          <strong>10-minute window:</strong> confirm with your PIN before the timer ends. If time runs out, we cancel the trade and release any locked funds back according to our rules.
+        </div>
+        <div style="margin-top:14px;font-size:13px;color:#5c6b61;">
+          Something off? Open the trade in the app to chat or escalate — and if you did not expect this at all, tell us at <a href="mailto:{{supportEmail}}" style="color:#1e5d45;font-weight:700;">{{supportEmail}}</a>.
+        </div>
+      </div>
+    </div>
+  </body>
 </html>

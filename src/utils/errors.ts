@@ -10,20 +10,22 @@ export class AppError extends Error {
 }
 
 export class UnauthorizedError extends AppError {
-  constructor(message = 'Unauthorized') {
-    super('UNAUTHORIZED', message, 401);
+  constructor(
+    message = 'Authentication required. Include a valid Bearer access token in the Authorization header.',
+    code = 'UNAUTHORIZED',
+  ) {
+    super(code, message, 401);
   }
 }
 
 export class ForbiddenError extends AppError {
-  constructor(message = 'Forbidden') {
-    super('FORBIDDEN', message, 403);
+  constructor(message = 'You do not have permission to perform this action.', code = 'FORBIDDEN') {
+    super(code, message, 403);
   }
 }
 
 export class NotFoundError extends AppError {
-  constructor(message = 'Not found') {
-    super('NOT_FOUND', message, 404);
+  constructor(message = 'The requested resource was not found.', code = 'NOT_FOUND') {
+    super(code, message, 404);
   }
 }
-

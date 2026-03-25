@@ -25,6 +25,10 @@ export async function requirePinSet(userId: string, qr: QueryRunner, customMessa
   
   const user = rows[0];
   if (!user || !user.transaction_pin_set) {
-    throw new AppError('PIN_NOT_SET', customMessage || 'You must set a transaction PIN before trading', 400);
+    throw new AppError(
+      'PIN_NOT_SET',
+      customMessage || 'Set a 6-digit transaction PIN in Security settings before you can use this feature.',
+      400,
+    );
   }
 }

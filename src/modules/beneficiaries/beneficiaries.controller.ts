@@ -123,7 +123,7 @@ export async function deleteBeneficiary(req: Request, res: Response) {
       req.user!.id,
     ]);
     if (result[1] === 0) {
-      throw new NotFoundError('Beneficiary not found');
+      throw new NotFoundError('No beneficiary matches that ID on your account.', 'BENEFICIARY_NOT_FOUND');
     }
   });
 

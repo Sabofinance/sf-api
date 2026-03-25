@@ -86,7 +86,7 @@ export async function markRead(req: Request, res: Response) {
     );
 
     if (result[1] === 0) {
-      throw new NotFoundError('Notification not found or access denied');
+      throw new NotFoundError('No notification with that ID exists on your account.', 'NOTIFICATION_NOT_FOUND');
     }
   });
 

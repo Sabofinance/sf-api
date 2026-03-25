@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verify account deletion — Sabo Finance</title>
+  </head>
+  <body style="margin:0;padding:24px;background:#f5f7f3;font-family:Arial,Helvetica,sans-serif;color:#10212b;">
+    <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e2e9da;border-radius:16px;overflow:hidden;">
+      <div style="background:linear-gradient(120deg,#2a1a1f,#173746);padding:28px;border-bottom:4px solid #c8f032;color:#fff;">
+        <div style="font-size:26px;font-weight:800;line-height:1.2;">Confirm account deletion</div>
+        <div style="margin-top:10px;font-size:15px;opacity:0.95;line-height:1.5;">We are sorry to see you go — take a moment before you continue.</div>
+      </div>
+      <div style="padding:26px;line-height:1.75;font-size:15px;">
+        <p style="margin:0 0 12px;">Hi <strong>{{name}}</strong>,</p>
+        <p style="margin:0 0 16px;">
+          You asked to close your Sabo Finance account. This will limit access to trading and history; use the code below only if you are sure.
+        </p>
+        <div style="text-align:center;background:#f4fbd7;border:1px solid #dff187;border-radius:12px;padding:16px 18px;margin:20px 0;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:0.12em;color:#5a6b40;text-transform:uppercase;">Deletion code</div>
+          <div style="font-size:46px;letter-spacing:10px;font-weight:800;color:#0a1e28;">{{otp}}</div>
+        </div>
+        <div style="padding:14px;background:#fff0f2;border-left:3px solid #bf2b45;border-radius:0 10px 10px 0;font-size:13px;color:#7e1730;">
+          <strong>Changed your mind?</strong> Close this email and do nothing — your account stays active. The code expires in 10 minutes.
+        </div>
+        <div style="margin-top:14px;font-size:13px;color:#5c6b61;">
+          Questions? <a href="mailto:{{supportEmail}}" style="color:#1e5d45;font-weight:700;">{{supportEmail}}</a>
+        </div>
+      </div>
+      <div style="border-top:1px solid #e8eee2;padding:16px 28px;font-size:12px;color:#5c6b61;">
+        Sabo Finance Security Mailer
+      </div>
+    </div>
+  </body>
+</html>

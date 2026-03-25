@@ -5,7 +5,7 @@ import { LedgerEntry } from '../src/database/entities/LedgerEntry';
 import { withTransaction } from '../src/database/transaction';
 import { Currency, DepositStatus } from '../src/utils/enums';
 
-import { app, makeAdmin, registerVerifiedUser } from './helpers';
+import { app, makeAdmin, MIN_VALID_PNG, registerVerifiedUser } from './helpers';
 
 describe('Deposits', () => {
   it('initiates NGN deposit', async () => {
@@ -84,7 +84,7 @@ describe('Deposits', () => {
       .set('Authorization', `Bearer ${user.accessToken}`)
       .field('currency', Currency.USD)
       .field('amount', '50.00')
-      .attach('proof', Buffer.from('fake'), { filename: 'proof.png', contentType: 'image/png' });
+      .attach('proof', MIN_VALID_PNG, { filename: 'proof.png', contentType: 'image/png' });
     expect(submit.status).toBe(201);
     expect(submit.body.data.deposit.status).toBe(DepositStatus.pending_review);
 

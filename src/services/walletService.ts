@@ -13,7 +13,8 @@ function asDecimal(v: Money) {
 }
 
 function assertNonNegative(amount: Decimal, code: string) {
-  if (amount.isNaN() || amount.lte(0)) throw new AppError(code, 'Amount must be greater than zero', 400);
+  if (amount.isNaN() || amount.lte(0))
+    throw new AppError(code, 'Amount must be a positive number with at most two decimal places.', 400);
 }
 
 export class WalletService {
@@ -88,7 +89,12 @@ export class WalletService {
 
     const wallet = await this.getWalletForUpdate(queryRunner, userId, currency);
     const before = asDecimal(wallet.balance);
-    if (before.lt(amount)) throw new AppError('INSUFFICIENT_FUNDS', 'Insufficient available balance', 400);
+    if (before.lt(amount))
+      throw new AppError(
+        'INSUFFICIENT_FUNDS',
+        'Your available balance in this currency is too low for this amount.',
+        400,
+      );
     const after = before.minus(amount);
 
     await queryRunner.query(`UPDATE "wallets" SET "balance" = $1, "updated_at" = now() WHERE "id" = $2`, [
@@ -140,7 +146,12 @@ export class WalletService {
     const wallet = await this.getWalletForUpdate(queryRunner, userId, currency);
 
     const available = asDecimal(wallet.balance);
-    if (available.lt(amount)) throw new AppError('INSUFFICIENT_FUNDS', 'Insufficient available balance', 400);
+    if (available.lt(amount))
+      throw new AppError(
+        'INSUFFICIENT_FUNDS',
+        'Your available balance in this currency is too low to lock this amount.',
+        400,
+      );
 
     const newAvailable = available.minus(amount);
     const newLocked = asDecimal(wallet.locked_balance).plus(amount);
@@ -192,7 +203,12 @@ export class WalletService {
     const wallet = await this.getWalletForUpdate(queryRunner, userId, currency);
 
     const locked = asDecimal(wallet.locked_balance);
-    if (locked.lt(amount)) throw new AppError('INSUFFICIENT_LOCKED', 'Insufficient locked balance', 400);
+    if (locked.lt(amount))
+      throw new AppError(
+        'INSUFFICIENT_LOCKED',
+        'The amount you are trying to release exceeds what is currently locked for this wallet.',
+        400,
+      );
 
     const newLocked = locked.minus(amount);
     const newAvailable = asDecimal(wallet.balance).plus(amount);
@@ -273,7 +289,7 @@ export class WalletService {
       [userId, currency],
     )) as Array<{ id: string; balance: string; locked_balance: string; escrow_balance: string }>;
     const wallet = rows[0];
-    if (!wallet) throw new NotFoundError('Wallet not found');
+    if (!wallet) throw new NotFoundError('No wallet exists for this user and currency.', 'WALLET_NOT_FOUND');
     return wallet;
   }
 }

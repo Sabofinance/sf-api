@@ -37,6 +37,12 @@ export class User {
   @Column({ type: 'timestamptz', nullable: true })
   otp_expires?: Date;
 
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  otp_purpose?: string;
+
+  @Column({ type: 'varchar', length: 320, nullable: true })
+  otp_target_email?: string;
+
   @Column({ type: 'boolean', default: false })
   email_verified!: boolean;
 
@@ -57,6 +63,12 @@ export class User {
 
   @Column({ type: 'boolean', default: false })
   is_suspended!: boolean;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  deleted_at?: Date | null;
+
+  @Column({ type: 'varchar', length: 1024, nullable: true })
+  profile_picture_url?: string | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

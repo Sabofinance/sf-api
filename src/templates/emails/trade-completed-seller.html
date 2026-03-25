@@ -1,13 +1,25 @@
-<!DOCTYPE html>
-<html>
-
-<body>
-    <h2>Trade Completed — {{reference}}</h2>
-    <p>Your trade has been completed successfully.</p>
-    <ul>
-        <li><strong>You received:</strong> {{total_ngn}} NGN</li>
-        <li><strong>Trade reference:</strong> {{reference}}</li>
-    </ul>
-</body>
-
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:24px;background:#f5f7f3;font-family:Arial,sans-serif;color:#10212b;">
+    <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e2e9da;border-radius:16px;overflow:hidden;">
+      <div style="background:linear-gradient(120deg,#0a1e28,#173746);padding:26px;border-bottom:4px solid #c8f032;color:#fff;font-size:24px;font-weight:700;">
+        Trade settled
+      </div>
+      <div style="padding:24px;line-height:1.7;font-size:15px;">
+        <div style="margin-bottom:10px;">
+          Trade <strong>{{reference}}</strong> has been successfully settled.
+        </div>
+        <div style="background:#f4fbd7;border:1px solid #dff187;border-radius:12px;padding:14px;">
+          Amount: <strong>{{amount}} {{currency}}</strong><br/>
+          Received: <strong>{{total_ngn}} NGN</strong>
+        </div>
+        <div style="margin-top:14px;background:#f7faf2;border-left:3px solid #0a1e28;padding:12px;font-size:13px;color:#425247;">
+          Your wallet has been updated. You can accept new bids or create your next listing.
+        </div>
+        <div style="margin-top:12px;font-size:12px;color:#8a9a80;">
+          If you didn’t expect this settlement, contact support right away.
+        </div>
+      </div>
+    </div>
+  </body>
 </html>

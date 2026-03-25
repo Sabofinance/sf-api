@@ -7,7 +7,7 @@ import { TradeRating } from '../../database/entities/TradeRating';
 import { withTransaction } from '../../database/transaction';
 import { created, ok } from '../../utils/apiResponse';
 import { TradeStatus } from '../../utils/enums';
-import { AppError, NotFoundError } from '../../utils/errors';
+import { AppError, ForbiddenError, NotFoundError } from '../../utils/errors';
 
 const submitRatingSchema = z.object({
   trade_id: z.string().uuid(),
@@ -48,7 +48,7 @@ export async function submitRating(req: Request, res: Response) {
     if (!trade) throw new NotFoundError('Trade not found');
 
     if (trade.status !== TradeStatus.completed) {
-      throw new AppError('INVALID_TRADE', 'You can only rate a completed trade', 400);
+      throw new AppError('INVALID_TRADE', 'Ratings are only available after the trade is marked completed.', 400);
     }
 
     // 2. Verify rater was part of the trade and determine who they are rating
@@ -58,7 +58,7 @@ export async function submitRating(req: Request, res: Response) {
     } else if (trade.seller_id === rater_id) {
       rated_user_id = trade.buyer_id;
     } else {
-      throw new AppError('UNAUTHORIZED', 'You were not a participant in this trade', 403);
+      throw new ForbiddenError('Only the buyer or seller in this trade can leave a rating.', 'NOT_TRADE_PARTICIPANT');
     }
 
     // 3. Ensure they haven't already rated this trade
@@ -68,7 +68,7 @@ export async function submitRating(req: Request, res: Response) {
     ])) as TradeRating[];
 
     if (existing.length > 0) {
-      throw new AppError('ALREADY_RATED', 'You have already submitted a rating for this trade', 400);
+      throw new AppError('ALREADY_RATED', 'You have already submitted a rating for this trade.', 400);
     }
 
     // 4. Insert the rating

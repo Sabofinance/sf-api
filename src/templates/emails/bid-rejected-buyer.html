@@ -1,29 +1,22 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { text-align: center; margin-bottom: 20px; }
-    .content { background: #f9f9f9; padding: 20px; border-radius: 5px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h2>Your Bid Was Not Accepted</h2>
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:24px;background:#f5f7f3;font-family:Arial,sans-serif;color:#10212b;">
+    <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e2e9da;border-radius:16px;overflow:hidden;">
+      <div style="background:linear-gradient(120deg,#0a1e28,#173746);padding:26px;border-bottom:4px solid #c8f032;color:#fff;font-size:24px;font-weight:700;">
+        Bid not accepted
+      </div>
+      <div style="padding:24px;line-height:1.7;font-size:15px;">
+        <div style="margin-bottom:12px;">The seller declined your bid. Your escrowed funds have been returned.</div>
+        <div style="background:#f4fbd7;border:1px solid #dff187;border-radius:12px;padding:14px;">
+          Reference: <strong>{{reference}}</strong><br/>
+          Proposed rate: <strong>NGN {{proposed_rate_ngn}}</strong><br/>
+          Reason: <strong>{{rejection_reason}}</strong><br/>
+          Released amount: <strong>NGN {{total_ngn_at_bid_rate}}</strong>
+        </div>
+        <div style="margin-top:14px;background:#f7faf2;border-left:3px solid #0a1e28;padding:12px;font-size:13px;color:#425247;">
+          If you’d still like to trade, you can place a new bid when you’re ready.
+        </div>
+      </div>
     </div>
-    <div class="content">
-      <p>The seller has declined your bid.</p>
-      <ul>
-        <li>Bid reference: {{reference}}</li>
-        <li>Proposed rate: ₦{{proposed_rate_ngn}}</li>
-      </ul>
-      {{#if rejection_reason}}
-      <p>Reason: {{rejection_reason}}</p>
-      {{/if}}
-      <p>Your funds of ₦{{total_ngn_at_bid_rate}} have been released back to your wallet.</p>
-    </div>
-  </div>
-</body>
+  </body>
 </html>

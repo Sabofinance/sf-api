@@ -1,104 +1,32 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Deposit Confirmation – Sabo Finance</title>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
-    <style>
-         :root {
-            --dark: #0a1e28;
-            --lime: #c8f032;
-            --white: #ffffff;
-            --off: #f4f6f2;
-            --border: #e4e8df;
-            --muted: #6b7a5e;
-        }
-        
-        body {
-            background-color: var(--off);
-            font-family: 'DM Sans', sans-serif;
-        }
-        
-        .email-wrapper {
-            max-width: 600px;
-            margin: 48px auto;
-            padding: 0 16px;
-        }
-        
-        .card {
-            background: var(--white);
-            border-radius: 16px;
-            overflow: hidden;
-        }
-        
-        .card-header {
-            background: linear-gradient(135deg, #0a1e28, #163544);
-            padding: 32px 44px;
-            text-align: center;
-            border-bottom: 4px solid #c8f032;
-        }
-        
-        .card-title {
-            font-family: 'DM Serif Display', serif;
-            font-size: 34px;
-            color: #ffffff;
-        }
-        
-        .card-body {
-            padding: 40px 44px;
-        }
-        
-        .greeting {
-            font-size: 14.5px;
-            color: #3d4d38;
-            margin-bottom: 32px;
-            line-height: 1.7;
-        }
-        
-        .details {
-            margin-bottom: 24px;
-        }
-        
-        .details p {
-            margin-bottom: 8px;
-            background: #f3f8ea;
-            border-left: 4px solid #c8f032;
-            padding: 10px 12px;
-            border-radius: 6px;
-        }
-        
-        .card-footer {
-            border-top: 1px solid var(--border);
-            padding: 22px 44px;
-            font-size: 12px;
-            color: var(--muted);
-        }
-    </style>
-</head>
-
-<body>
-    <div class="email-wrapper">
-        <div class="card">
-            <div class="card-header">
-                <div style="font-size:11px;color:#d8efcf;letter-spacing:.8px;margin-bottom:10px;">SABO FINANCE</div>
-                <div class="card-title">Deposit Confirmed</div>
-            </div>
-            <div class="card-body">
-                <div class="greeting">
-                    Hello <strong>{{name}}</strong>, your deposit has been successfully processed and the funds are now available in your wallet.
-                </div>
-                <div class="details">
-                    <p><strong>Amount:</strong> {{amount}} {{currency}}</p>
-                    <p><strong>Reference:</strong> {{reference}}</p>
-                </div>
-            </div>
-            <div class="card-footer">
-                &copy; 2026 Sabo Finance. All rights reserved.
-            </div>
+  <body style="margin:0;padding:24px;background:#f5f7f3;font-family:Arial,sans-serif;color:#10212b;">
+    <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e2e9da;border-radius:16px;overflow:hidden;">
+      <div style="background:linear-gradient(120deg,#0a1e28,#173746);padding:26px;border-bottom:4px solid #c8f032;color:#fff;font-size:26px;font-weight:bold;">
+        Deposit confirmed
+      </div>
+      <div style="padding:24px;color:#1f3228;line-height:1.7;font-size:15px;">
+        <div style="margin-bottom:12px;">
+          Hi <strong>{{name}}</strong>, thank you for your deposit.
+          We’ve confirmed your payment and credited <strong>{{amount}} {{currency}}</strong> to your wallet.
         </div>
+        <div style="margin-top:16px;background:#f4fbd7;border:1px solid #dff187;padding:14px;border-radius:12px;">
+          <div style="font-size:12px;color:#5a6b40;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Deposit details</div>
+          <div style="margin-top:8px;">
+            Amount: <strong>{{amount}} {{currency}}</strong><br/>
+            Reference: <strong>{{reference}}</strong>
+          </div>
+        </div>
+        <div style="margin-top:14px;background:#f7faf2;border-left:3px solid #0a1e28;padding:12px;font-size:13px;color:#425247;">
+          Your credited funds are now ready for trading (subject to your account verification status).
+        </div>
+        <div style="margin-top:12px;font-size:12px;color:#8a9a80;">
+          If you didn’t initiate this deposit, please contact support right away.
+        </div>
+      </div>
+      <div style="border-top:1px solid #e8eee2;padding:16px 28px;font-size:12px;color:#5c6b61;">
+        Sabo Finance Security Mailer
+      </div>
     </div>
-</body>
-
+  </body>
 </html>

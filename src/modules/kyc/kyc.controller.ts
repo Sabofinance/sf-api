@@ -44,7 +44,8 @@ export async function uploadKyc(req: Request, res: Response) {
   const files = (req as any).files as Record<string, Express.Multer.File[]> | undefined;
   const document = files?.document?.[0];
   const selfie = files?.selfie?.[0];
-  if (!document || !selfie) throw new AppError('FILES_REQUIRED', 'document and selfie files are required', 400);
+  if (!document || !selfie)
+    throw new AppError('FILES_REQUIRED', 'Upload both a valid ID document and a clear selfie image.', 400);
 
   if (!cloudinary.config().cloud_name) {
     throw new AppError('CONFIG_ERROR', 'CLOUDINARY_URL is required for KYC uploads', 500);

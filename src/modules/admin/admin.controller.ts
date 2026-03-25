@@ -1,4 +1,4 @@
-// import crypto from 'crypto';
+import crypto from 'crypto';
 
 import bcrypt from 'bcrypt';
 import type { Request, Response } from 'express';
@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
 import { env } from '../../config/env';
+import { cloudinary } from '../../config/cloudinary';
 import { Deposit } from '../../database/entities/Deposit';
 import { Kyc } from '../../database/entities/Kyc';
 import { User } from '../../database/entities/User';
@@ -15,7 +16,7 @@ import { NotificationService } from '../../services/notificationService';
 import { WalletService } from '../../services/walletService';
 import { ok } from '../../utils/apiResponse';
 import { Currency, DepositStatus, KycStatus, LedgerType, NotificationType, UserRole } from '../../utils/enums';
-import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
+import { AppError, NotFoundError } from '../../utils/errors';
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -62,26 +63,27 @@ export async function adminLogin(req: Request, res: Response) {
 
   const user = await withTransaction(async (qr) => {
     const rows = (await qr.query(
-      `SELECT "id","password_hash","role","email","name","kyc_status" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) LIMIT 1`,
+      `SELECT "id","password_hash","role","email","name","kyc_status","is_suspended","deleted_at" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) LIMIT 1`,
       [input.email.toLowerCase(), UserRole.admin, UserRole.super_admin],
-    )) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; }>;
+    )) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; is_suspended: boolean; deleted_at: Date | null; }>;
     return rows[0];
   });
 
-  if (!user) throw new UnauthorizedError('Invalid admin credentials');
+  if (!user) throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email or password.', 401);
+  if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
+  if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
 
   const okPass = await bcrypt.compare(input.password, user.password_hash);
-  if (!okPass) throw new UnauthorizedError('Invalid admin credentials');
+  if (!okPass) throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email or password.', 401);
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   await withTransaction(async (qr) => {
-    await qr.query('UPDATE "users" SET "otp" = $1, "otp_expires" = $2 WHERE "id" = $3', [
-      otp,
-      otp_expires,
-      user.id,
-    ]);
+    await qr.query(
+      'UPDATE "users" SET "otp" = $1, "otp_expires" = $2, "otp_purpose" = $3, "otp_target_email" = NULL WHERE "id" = $4',
+      [otp, otp_expires, 'admin-login', user.id],
+    );
   });
 
   await sendEmail({
@@ -119,21 +121,24 @@ export async function adminVerifyOtp(req: Request, res: Response) {
 
   const user = await withTransaction(async (qr) => {
     const rows = (await qr.query(
-      'SELECT "id", "name", "email", "role", "kyc_status" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) AND "otp" = $4 AND "otp_expires" > NOW() LIMIT 1',
-      [input.email.toLowerCase(), UserRole.admin, UserRole.super_admin, input.otp],
-    )) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string }>;
+      'SELECT "id", "name", "email", "role", "kyc_status", "is_suspended", "deleted_at" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) AND "otp" = $4 AND "otp_purpose" = $5 AND "otp_expires" > NOW() LIMIT 1',
+      [input.email.toLowerCase(), UserRole.admin, UserRole.super_admin, input.otp, 'admin-login'],
+    )) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string; is_suspended: boolean; deleted_at: Date | null }>;
 
     return rows[0];
   });
 
   if (!user) {
-    throw new AppError('INVALID_OTP', 'OTP is invalid or has expired', 400);
+    throw new AppError('INVALID_OTP', 'That admin sign-in code is incorrect or has expired. Request a new OTP.', 400);
   }
+  if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
+  if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
 
   await withTransaction(async (qr) => {
-    await qr.query('UPDATE "users" SET "otp" = NULL, "otp_expires" = NULL WHERE "id" = $1', [
-      user.id,
-    ]);
+    await qr.query(
+      'UPDATE "users" SET "otp" = NULL, "otp_expires" = NULL, "otp_purpose" = NULL, "otp_target_email" = NULL WHERE "id" = $1',
+      [user.id],
+    );
   });
 
   const accessToken = signAdminAccessToken(user);
@@ -210,7 +215,7 @@ export async function getUser(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
   const user = await withTransaction(async (qr) => {
     const userRows = (await qr.query(`SELECT * FROM "users" WHERE "id" = $1`, [id])) as User[];
-    if (userRows.length === 0) throw new NotFoundError('User not found');
+    if (userRows.length === 0) throw new NotFoundError('No user exists with that ID.', 'USER_NOT_FOUND');
     const wallets = await qr.query(`SELECT * FROM "wallets" WHERE "user_id" = $1`, [id]);
     return { ...userRows[0], wallets };
   });
@@ -893,7 +898,18 @@ export async function getImpactAnalytics(req: Request, res: Response) {
 }
 
 /**
- * List all deposits (System-wide)
+ * @swagger
+ * /admin/deposits:
+ *   get:
+ *     summary: List all deposits across the platform
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
 export async function listAllDeposits(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
@@ -911,7 +927,18 @@ export async function listAllDeposits(req: Request, res: Response) {
 }
 
 /**
- * List all disputes (System-wide)
+ * @swagger
+ * /admin/disputes:
+ *   get:
+ *     summary: List all disputes across the platform
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
 export async function listAllDisputes(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
@@ -930,7 +957,18 @@ export async function listAllDisputes(req: Request, res: Response) {
 }
 
 /**
- * List all Transactions (System-wide Ledger)
+ * @swagger
+ * /admin/transactions:
+ *   get:
+ *     summary: List all ledger transactions across the platform
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
 export async function listAllTransactions(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
@@ -998,5 +1036,375 @@ export async function rejectDeposit(req: Request, res: Response) {
   });
 
   return ok(res, { deposit });
+}
+
+const inviteAdminSchema = z.object({
+  email: z.string().email(),
+});
+
+/**
+ * @swagger
+ * /admin/invites:
+ *   post:
+ *     summary: Create a single-use admin invite (super admin only)
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, example: "newadmin@example.com" }
+ *     responses:
+ *       200:
+ *         description: Invite created
+ */
+export async function inviteAdmin(req: Request, res: Response) {
+  const input = inviteAdminSchema.parse(req.body);
+  const inviterId = req.user!.id;
+  const invitedEmail = input.email.toLowerCase();
+
+  const result = await withTransaction(async (qr) => {
+    const already = (await qr.query(
+      `SELECT "id","role","deleted_at","is_suspended" FROM "users" WHERE "email" = $1 LIMIT 1`,
+      [invitedEmail],
+    )) as Array<{ id: string; role: UserRole; deleted_at: Date | null; is_suspended: boolean }>;
+
+    if (already.length > 0 && (already[0].role === UserRole.admin || already[0].role === UserRole.super_admin) && !already[0].deleted_at) {
+      return { accepted: true, invitedEmail, inviteId: null as string | null };
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const token_hash = crypto.createHash('sha256').update(token).digest('hex');
+    const expires_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    const inviteRows = await qr.query(
+      `INSERT INTO "admin_invites" ("id","token_hash","inviter_id","invited_email","granted_role","expires_at","consumed_at","consumed_by")
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NULL, NULL)
+       RETURNING "id"`,
+      [token_hash, inviterId, invitedEmail, UserRole.admin, expires_at],
+    );
+
+    const inviteId = inviteRows[0]?.id as string;
+
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'ADMIN_INVITE_CREATED', 'user', $1, $2, now())`,
+      [inviterId, JSON.stringify({ invitedEmail, inviteId })],
+    );
+
+    return { accepted: false, inviteId, token, invitedEmail };
+  });
+
+  if (result.accepted) {
+    return ok(res, { message: 'User is already an admin.' });
+  }
+
+  const baseUrl = env.API_BASE_URL ?? 'http://localhost:3000';
+  const acceptLink = `${baseUrl}/admin/invites/accept?token=${encodeURIComponent(result.token!)}`;
+
+  await sendEmail({
+    to: result.invitedEmail,
+    subject: 'You are invited to become an admin - Sabo Finance',
+    template: 'admin-invite',
+    context: { acceptLink, roleLabel: 'admin' },
+  });
+
+  return ok(res, { message: 'Admin invite created and email sent.', inviteId: result.inviteId });
+}
+
+/**
+ * @swagger
+ * /admin/invites/accept:
+ *   get:
+ *     summary: Accept an admin invite token (public)
+ *     tags: [Admin]
+ *     parameters:
+ *       - in: query
+ *         name: token
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Invite processed
+ */
+export async function acceptAdminInvite(req: Request, res: Response) {
+  const tokenRaw = req.query.token;
+  const token = typeof tokenRaw === 'string' ? tokenRaw : '';
+  if (!token) throw new AppError('INVITE_TOKEN_MISSING', 'Invite token is required', 400);
+
+  const token_hash = crypto.createHash('sha256').update(token).digest('hex');
+
+  const result = await withTransaction(async (qr) => {
+    const inviteRows = (await qr.query(
+      `SELECT * FROM "admin_invites"
+       WHERE "token_hash" = $1 AND "consumed_at" IS NULL AND "expires_at" > now()
+       LIMIT 1
+       FOR UPDATE`,
+      [token_hash],
+    )) as Array<{
+      id: string;
+      inviter_id: string;
+      invited_email: string;
+      granted_role: UserRole | string;
+    }>;
+
+    const invite = inviteRows[0];
+    if (!invite) throw new AppError('INVITE_EXPIRED_OR_INVALID', 'Invite token is invalid or expired', 400);
+
+    const userRows = (await qr.query(
+      `SELECT "id","name","email","role","deleted_at" FROM "users" WHERE "email" = $1 AND "deleted_at" IS NULL LIMIT 1 FOR UPDATE`,
+      [invite.invited_email],
+    )) as Array<{ id: string; name: string; email: string; role: UserRole; deleted_at: Date | null }>;
+
+    const user = userRows[0];
+    if (!user) {
+      // Invite remains unconsumed until a matching user is available.
+      return { accepted: false, inviteId: invite.id, invitedEmail: invite.invited_email };
+    }
+
+    await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [invite.granted_role, user.id]);
+    await qr.query(
+      `UPDATE "admin_invites" SET "consumed_at" = now(), "consumed_by" = $1 WHERE "id" = $2`,
+      [user.id, invite.id],
+    );
+
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'ADMIN_INVITE_ACCEPTED', 'user', $2, $3, now())`,
+      [invite.inviter_id, user.id, JSON.stringify({ inviteId: invite.id, acceptedUserId: user.id })],
+    );
+
+    return { accepted: true, inviteId: invite.id, userId: user.id, name: user.name, email: user.email };
+  });
+
+  if (!result.accepted) {
+    return ok(res, { message: 'Invite is valid. Register your account with the invited email to accept.' });
+  }
+
+  const accepted = result as {
+    accepted: true;
+    inviteId: string;
+    userId: string;
+    name: string;
+    email: string;
+  };
+
+  await sendEmail({
+    to: accepted.email,
+    subject: 'Admin access granted - Sabo Finance',
+    template: 'admin-invite-accepted',
+    context: { name: accepted.name },
+  });
+
+  return ok(res, { message: 'Invite accepted. Admin role granted.', inviteId: accepted.inviteId });
+}
+
+/**
+ * @swagger
+ * /admin/admins/{id}/remove:
+ *   post:
+ *     summary: Remove admin role (super admin only)
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Admin removed
+ */
+export async function removeAdmin(req: Request, res: Response) {
+  const { id } = idSchema.parse(req.params);
+
+  const result = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","name","email","role","deleted_at" FROM "users" WHERE "id" = $1 AND "deleted_at" IS NULL LIMIT 1 FOR UPDATE`,
+      [id],
+    )) as Array<{ id: string; name: string; email: string; role: UserRole; deleted_at: Date | null }>;
+    const user = rows[0];
+    if (!user) throw new NotFoundError('No user with that ID was found.', 'USER_NOT_FOUND');
+    if (user.role !== UserRole.admin)
+      throw new AppError('NOT_ADMIN', 'That user is not currently an admin, so their admin role cannot be removed.', 400);
+
+    await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [UserRole.user, user.id]);
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'ADMIN_REMOVED', 'user', $2, $3, now())`,
+      [req.user!.id, user.id, JSON.stringify({ targetUserId: user.id })],
+    );
+
+    return { email: user.email, name: user.name };
+  });
+
+  await sendEmail({
+    to: result.email,
+    subject: 'Admin access removed - Sabo Finance',
+    template: 'admin-removed',
+    context: { name: result.name },
+  });
+
+  return ok(res, { message: 'Admin role removed.' });
+}
+
+/**
+ * @swagger
+ * /admin/admins/{id}/upgrade:
+ *   post:
+ *     summary: Upgrade admin to super admin (super admin only)
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Admin upgraded
+ */
+export async function upgradeAdminToSuperAdmin(req: Request, res: Response) {
+  const { id } = idSchema.parse(req.params);
+
+  const result = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","email","role","deleted_at","name" FROM "users" WHERE "id" = $1 AND "deleted_at" IS NULL LIMIT 1 FOR UPDATE`,
+      [id],
+    )) as Array<{ id: string; email: string; role: UserRole; deleted_at: Date | null; name: string }>;
+    const user = rows[0];
+    if (!user) throw new NotFoundError('No user with that ID was found.', 'USER_NOT_FOUND');
+
+    if (user.role !== UserRole.admin)
+      throw new AppError('NOT_ADMIN', 'Only users who are already admins can be upgraded to super admin.', 400);
+
+    await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [UserRole.super_admin, user.id]);
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'ADMIN_UPGRADED_TO_SUPERADMIN', 'user', $2, $3, now())`,
+      [req.user!.id, user.id, JSON.stringify({ targetUserId: user.id })],
+    );
+
+    return { email: user.email, name: user.name };
+  });
+
+  await sendEmail({
+    to: result.email,
+    subject: 'Super admin role granted - Sabo Finance',
+    template: 'admin-upgraded',
+    context: { name: result.name },
+  });
+
+  return ok(res, { message: 'Admin upgraded to super admin.' });
+}
+
+/**
+ * @swagger
+ * /admin/profile:
+ *   get:
+ *     summary: Get admin profile
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ */
+export async function getAdminProfile(req: Request, res: Response) {
+  const adminId = req.user!.id;
+  const profile = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","name","email","phone","username","role","profile_picture_url","is_suspended","kyc_status","deleted_at","created_at"
+       FROM "users"
+       WHERE "id" = $1 LIMIT 1`,
+      [adminId],
+    )) as Array<Record<string, unknown>>;
+
+    return rows[0];
+  });
+
+  return ok(res, { profile });
+}
+
+/**
+ * @swagger
+ * /admin/profile/picture:
+ *   post:
+ *     summary: Update admin profile picture
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [file]
+ *             properties:
+ *               file: { type: string, format: binary }
+ *     responses:
+ *       200:
+ *         description: Picture updated
+ */
+export async function updateAdminProfilePicture(req: Request, res: Response) {
+  const file = req.file as Express.Multer.File | undefined;
+  if (!file) throw new AppError('FILE_REQUIRED', 'Profile picture file is required', 400);
+
+  const uploaded = await cloudinary.uploader.upload(`data:${file.mimetype};base64,${file.buffer.toString('base64')}`, {
+    folder: 'sabo-finance/admin-profile',
+    resource_type: 'image',
+  });
+
+  const result = await withTransaction(async (qr) => {
+    await qr.query(`UPDATE "users" SET "profile_picture_url" = $1 WHERE "id" = $2`, [
+      uploaded.secure_url,
+      req.user!.id,
+    ]);
+
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'ADMIN_PROFILE_PICTURE_UPDATED', 'user', $1, $2, now())`,
+      [req.user!.id, JSON.stringify({ hasPicture: true })],
+    );
+
+    return { profile_picture_url: uploaded.secure_url };
+  });
+
+  return ok(res, { ...result });
+}
+
+/**
+ * @swagger
+ * /admin/logs:
+ *   get:
+ *     summary: List admin logs (admin sees own logs, super admin sees all)
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
+ */
+export async function listAdminLogs(req: Request, res: Response) {
+  const { page, limit } = paginationSchema.parse(req.query);
+  const actorId = req.user!.id;
+  const isSuper = req.user!.role === UserRole.super_admin;
+
+  const logs = await withTransaction(async (qr) => {
+    const params: unknown[] = [];
+    let query = `SELECT * FROM "admin_logs"`;
+    if (!isSuper) {
+      query += ` WHERE "admin_id" = $1`;
+      params.push(actorId);
+    }
+    query += ` ORDER BY "created_at" DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+    return qr.query(query, params);
+  });
+
+  return ok(res, { logs });
 }
 

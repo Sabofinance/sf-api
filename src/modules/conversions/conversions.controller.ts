@@ -44,7 +44,7 @@ export async function getQuote(req: Request, res: Response) {
   const { from, to, amount } = quoteSchema.parse(req.body);
 
   if (from === to) {
-    throw new AppError('INVALID_CONVERSION', 'Cannot convert to the same currency', 400);
+    throw new AppError('INVALID_CONVERSION', 'Source and destination currency must be different.', 400);
   }
 
   // In a real system, this would fetch the live rate and apply a spread
@@ -94,7 +94,7 @@ export async function executeQuote(req: Request, res: Response) {
   const { from, to, amount } = quoteSchema.parse(req.body);
 
   if (from === to) {
-    throw new AppError('INVALID_CONVERSION', 'Cannot convert to the same currency', 400);
+    throw new AppError('INVALID_CONVERSION', 'Source and destination currency must be different.', 400);
   }
 
   const walletService = new WalletService();

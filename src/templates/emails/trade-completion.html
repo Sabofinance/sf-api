@@ -1,105 +1,22 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Trade Completed – Sabo Finance</title>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
-    <style>
-         :root {
-            --dark: #0a1e28;
-            --lime: #c8f032;
-            --white: #ffffff;
-            --off: #f4f6f2;
-            --border: #e4e8df;
-            --muted: #6b7a5e;
-        }
-        
-        body {
-            background-color: var(--off);
-            font-family: 'DM Sans', sans-serif;
-        }
-        
-        .email-wrapper {
-            max-width: 600px;
-            margin: 48px auto;
-            padding: 0 16px;
-        }
-        
-        .card {
-            background: var(--white);
-            border-radius: 16px;
-            overflow: hidden;
-        }
-        
-        .card-header {
-            background: linear-gradient(135deg, #0a1e28, #163544);
-            padding: 32px 44px;
-            text-align: center;
-            border-bottom: 4px solid #c8f032;
-        }
-        
-        .card-title {
-            font-family: 'DM Serif Display', serif;
-            font-size: 34px;
-            color: #ffffff;
-        }
-        
-        .card-body {
-            padding: 40px 44px;
-        }
-        
-        .greeting {
-            font-size: 14.5px;
-            color: #3d4d38;
-            margin-bottom: 32px;
-            line-height: 1.7;
-        }
-        
-        .details {
-            margin-bottom: 24px;
-        }
-        
-        .details p {
-            margin-bottom: 8px;
-            background: #f3f8ea;
-            border-left: 4px solid #c8f032;
-            padding: 10px 12px;
-            border-radius: 6px;
-        }
-        
-        .card-footer {
-            border-top: 1px solid var(--border);
-            padding: 22px 44px;
-            font-size: 12px;
-            color: var(--muted);
-        }
-    </style>
-</head>
-
-<body>
-    <div class="email-wrapper">
-        <div class="card">
-            <div class="card-header">
-                <div style="font-size:11px;color:#d8efcf;letter-spacing:.8px;margin-bottom:10px;">SABO FINANCE</div>
-                <div class="card-title">Trade Completed</div>
-            </div>
-            <div class="card-body">
-                <div class="greeting">
-                    Hello <strong>{{name}}</strong>, your trade with reference <strong>{{reference}}</strong> has been successfully completed.
-                </div>
-                <div class="details">
-                    <p><strong>Amount:</strong> {{amount}} {{currency}}</p>
-                    <p><strong>Rate:</strong> 1 {{currency}} = {{rate}} NGN</p>
-                    <p><strong>Total:</strong> {{totalNgn}} NGN</p>
-                </div>
-            </div>
-            <div class="card-footer">
-                &copy; 2026 Sabo Finance. All rights reserved.
-            </div>
+  <body style="margin:0;padding:24px;background:#f5f7f3;font-family:Arial,sans-serif;color:#10212b;">
+    <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e2e9da;border-radius:16px;overflow:hidden;">
+      <div style="background:linear-gradient(120deg,#0a1e28,#173746);padding:26px;border-bottom:4px solid #c8f032;color:#fff;font-size:26px;font-weight:700;">
+        Trade completed successfully
+      </div>
+      <div style="padding:24px;line-height:1.75;font-size:15px;">
+        <div style="margin-bottom:12px;">Hello <strong>{{name}}</strong>, your trade has been completed and settled.</div>
+        <div style="background:#f4fbd7;border:1px solid #dff187;border-radius:12px;padding:14px;">
+          Reference: <strong>{{reference}}</strong><br />
+          Amount: <strong>{{amount}} {{currency}}</strong><br />
+          Rate: <strong>{{rate}} NGN</strong><br />
+          Total settled: <strong>{{totalNgn}} NGN</strong>
         </div>
+        <div style="margin-top:14px;background:#f7faf2;border-left:3px solid #0a1e28;padding:12px;font-size:13px;color:#425247;">
+          Thank you for trading with Sabo Finance. You can review full transaction details in your trade history.
+        </div>
+      </div>
     </div>
-</body>
-
+  </body>
 </html>

@@ -39,6 +39,10 @@ const refreshTokenSchema = z.object({
   refreshToken: z.string(),
 });
 
+const verifyEmailSchema = z.object({
+  token: z.string().min(1),
+});
+
 function signAccessToken(user: { id: string; name: string; email: string; role: UserRole; kyc_status: string }) {
   const payload = { id: user.id, name: user.name, email: user.email, role: user.role, kyc_status: user.kyc_status };
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '30m' });
@@ -119,18 +123,85 @@ export async function register(req: Request, res: Response) {
 
   // Send verification email
   const verificationToken = jwt.sign({ id: user.id, email: user.email, purpose: 'verify-email' }, env.JWT_SECRET, { expiresIn: '1h' });
-  const verificationLink = `http://localhost:3000/auth/verify-email?token=${verificationToken}`;
+  const verificationBaseUrl = env.API_BASE_URL ?? 'http://localhost:3000';
+  const verificationLink = `${verificationBaseUrl}/auth/verify-email?token=${encodeURIComponent(verificationToken)}`;
   await sendEmail({
     to: user.email,
     subject: 'Verify Your Email Address',
     template: 'email-verification',
     context: { name: user.name, verificationLink },
   });
+  const websiteUrl = env.WEBSITE_URL ?? 'https://sabofinance.com';
+  await sendEmail({
+    to: user.email,
+    subject: 'Welcome to Sabo Finance — your seat at the table is ready',
+    template: 'welcome',
+    context: {
+      name: user.name,
+      learnLink: `${websiteUrl}/learn`,
+      profileLink: `${websiteUrl}/settings/profile`,
+      helpCenterLink: env.HELP_CENTER_URL ?? `${websiteUrl}/help`,
+      contactLink: env.CONTACT_URL ?? `${websiteUrl}/contact`,
+    },
+  });
 
   const accessToken = signAccessToken(user);
   const refreshToken = signRefreshToken(user);
 
   return created(res, { user, tokens: { accessToken, refreshToken } });
+}
+
+/**
+ * @swagger
+ * /auth/verify-email:
+ *   get:
+ *     summary: Verify email using signed token
+ *     tags: [Auth]
+ *     parameters:
+ *       - in: query
+ *         name: token
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Email verified
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ *       400:
+ *         description: Invalid token
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiErrorEnvelope" }
+ */
+export async function verifyEmail(req: Request, res: Response) {
+  const { token } = verifyEmailSchema.parse(req.query);
+
+  let payload: { id?: string; email?: string; purpose?: string };
+  try {
+    payload = jwt.verify(token, env.JWT_SECRET) as { id?: string; email?: string; purpose?: string };
+  } catch {
+    throw new AppError('INVALID_TOKEN', 'Email verification link is invalid or has expired. Request a new verification email.', 400);
+  }
+
+  if (!payload.id || payload.purpose !== 'verify-email') {
+    throw new AppError('INVALID_TOKEN', 'Email verification link is invalid or has expired.', 400);
+  }
+
+  await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","email_verified" FROM "users" WHERE "id" = $1 LIMIT 1`,
+      [payload.id],
+    )) as Array<{ id: string; email_verified: boolean }>;
+    const user = rows[0];
+
+    if (!user) throw new AppError('USER_NOT_FOUND', 'No user exists for this verification link.', 404);
+    if (!user.email_verified) {
+      await qr.query(`UPDATE "users" SET "email_verified" = true WHERE "id" = $1`, [payload.id]);
+    }
+  });
+
+  return ok(res, { message: 'Email verified successfully' });
 }
 
 /**
@@ -166,26 +237,31 @@ export async function login(req: Request, res: Response) {
 
   const rows = (await withTransaction(async (qr) => {
     return (await qr.query(
-      `SELECT "id","password_hash","role","email","name","kyc_status" FROM "users" WHERE "email" = $1 LIMIT 1`,
+      `SELECT "id","password_hash","role","email","name","kyc_status","is_suspended","deleted_at" FROM "users" WHERE "email" = $1 LIMIT 1`,
       [input.email.toLowerCase()],
     )) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; }>;
   })) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; }>;
 
   const user = rows[0];
-  if (!user) throw new UnauthorizedError('Invalid credentials');
+  if (!user) throw new UnauthorizedError('Invalid email or password.', 'INVALID_CREDENTIALS');
+  if ((user as unknown as { is_suspended?: boolean; deleted_at?: Date | null }).deleted_at) {
+    throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
+  }
+  if ((user as unknown as { is_suspended?: boolean }).is_suspended) {
+    throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
+  }
 
   const okPass = await bcrypt.compare(input.password, user.password_hash);
-  if (!okPass) throw new UnauthorizedError('Invalid credentials');
+  if (!okPass) throw new UnauthorizedError('Invalid email or password.', 'INVALID_CREDENTIALS');
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   await withTransaction(async (qr) => {
-    await qr.query('UPDATE "users" SET "otp" = $1, "otp_expires" = $2 WHERE "id" = $3', [
-      otp,
-      otp_expires,
-      user.id,
-    ]);
+    await qr.query(
+      'UPDATE "users" SET "otp" = $1, "otp_expires" = $2, "otp_purpose" = $3, "otp_target_email" = NULL WHERE "id" = $4',
+      [otp, otp_expires, 'login', user.id],
+    );
   });
 
   await sendEmail({
@@ -236,21 +312,24 @@ export async function verifyOtp(req: Request, res: Response) {
 
   const user = await withTransaction(async (qr) => {
     const rows = (await qr.query(
-      'SELECT "id", "name", "email", "role", "kyc_status" FROM "users" WHERE "email" = $1 AND "otp" = $2 AND "otp_expires" > NOW() LIMIT 1',
-      [input.email.toLowerCase(), input.otp],
-    )) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string }>;
+      'SELECT "id", "name", "email", "role", "kyc_status","is_suspended","deleted_at" FROM "users" WHERE "email" = $1 AND "otp" = $2 AND "otp_purpose" = $3 AND "otp_expires" > NOW() LIMIT 1',
+      [input.email.toLowerCase(), input.otp, 'login'],
+    )) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string; is_suspended: boolean; deleted_at: Date | null }>;
 
     return rows[0];
   });
 
   if (!user) {
-    throw new AppError('INVALID_OTP', 'OTP is invalid or has expired', 400);
+    throw new AppError('INVALID_OTP', 'That sign-in code is incorrect or has expired. Request a new OTP from the login screen.', 400);
   }
+  if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
+  if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
 
   await withTransaction(async (qr) => {
-    await qr.query('UPDATE "users" SET "otp" = NULL, "otp_expires" = NULL WHERE "id" = $1', [
-      user.id,
-    ]);
+    await qr.query(
+      'UPDATE "users" SET "otp" = NULL, "otp_expires" = NULL, "otp_purpose" = NULL, "otp_target_email" = NULL WHERE "id" = $1',
+      [user.id],
+    );
   });
 
   const accessToken = signAccessToken(user);
@@ -323,7 +402,7 @@ export async function getMe(req: Request, res: Response) {
   });
 
   if (!user) {
-    throw new UnauthorizedError('User not found');
+    throw new AppError('USER_NOT_FOUND', 'Your profile could not be loaded. Please sign in again.', 401);
   }
 
   return ok(res, { user });
@@ -429,7 +508,7 @@ export async function resetPassword(req: Request, res: Response) {
   });
 
   if (!user) {
-    throw new AppError('INVALID_TOKEN', 'Password reset token is invalid or has expired', 400);
+    throw new AppError('INVALID_TOKEN', 'Password reset link is invalid or has expired. Request a new reset from the login page.', 400);
   }
 
   const password_hash = await bcrypt.hash(input.password, 12);
@@ -515,13 +594,16 @@ export async function refreshToken(req: Request, res: Response) {
 
     // Optional: verify user exists
     const user = await withTransaction(async (qr) => {
-      const rows = (await qr.query('SELECT "id", "name", "email", "role", "kyc_status" FROM "users" WHERE "id" = $1 LIMIT 1', [
-        payload.id,
-      ])) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string }>;
+      const rows = (await qr.query(
+        'SELECT "id", "name", "email", "role", "kyc_status", "is_suspended", "deleted_at" FROM "users" WHERE "id" = $1 LIMIT 1',
+        [payload.id],
+      )) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string; is_suspended: boolean; deleted_at: Date | null }>;
       return rows[0];
     });
 
-    if (!user) throw new AppError('USER_NOT_FOUND', 'User not found', 401);
+    if (!user) throw new AppError('USER_NOT_FOUND', 'No user exists for this refresh token.', 401);
+    if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
+    if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
 
     // Issue new tokens
     const newAccessToken = signAccessToken(user);
@@ -529,6 +611,6 @@ export async function refreshToken(req: Request, res: Response) {
 
     return ok(res, { tokens: { accessToken: newAccessToken, refreshToken: newRefreshToken } });
   } catch {
-    throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token is invalid or expired', 401);
+    throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token is invalid or expired. Sign in again to obtain new tokens.', 401);
   }
 }
