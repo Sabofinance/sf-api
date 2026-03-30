@@ -713,7 +713,7 @@ Gets a specific user and their wallets.
 Yes (Admin)
 
 ### Endpoint
-`POST /admin/users/:id/suspend`
+`POST /admin/users/:id/suspend`  
 
 ### Description
 Suspends a user account.
