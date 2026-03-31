@@ -1,4 +1,4 @@
-## Sabo Finance API Documentation
+﻿## Sabo Finance API Documentation
 
 All responses follow the standard envelope:
 

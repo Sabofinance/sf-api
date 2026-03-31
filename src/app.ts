@@ -1,8 +1,8 @@
 import 'reflect-metadata';
 
+import cors from 'cors';
 import express, { type Request, type Response } from 'express';
 import swaggerUi from 'swagger-ui-express';
-import cors from 'cors';
 
 
 import { env } from './config/env';
