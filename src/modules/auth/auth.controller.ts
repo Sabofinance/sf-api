@@ -388,7 +388,8 @@ export async function getMe(req: Request, res: Response) {
          "phone", 
          "email_verified", 
          "phone_verified", 
-         "kyc_status", 
+         "kyc_status",
+         "transaction_pin_set",
          "role", 
          "is_suspended", 
          "created_at" 

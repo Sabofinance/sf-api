@@ -853,7 +853,7 @@ Query Parameters:
 
 ---
 
-## Webhooks
+## Webhooks 
 
 ### POST /webhooks/flutterwave
 Process Flutterwave webhook events.
@@ -862,3 +862,4 @@ Headers:
 - `verif-hash`: Flutterwave webhook signature header
 
 Always returns HTTP 200.
+ 
