@@ -3,6 +3,7 @@ import { env } from './config/env';
 import { AppDataSource } from './database/data-source';
 import './jobs/pinExpiryJob'; // Initialize background jobs
 import './jobs/bidExpiryJob';
+import './jobs/depositExpiryJob';
 
 async function bootstrap() {
   const app = createApp();

@@ -119,12 +119,17 @@ export async function sendEmail(options: EmailOptions): Promise<{ messageId: str
     console.log(`Subject: ${options.subject}`);
 
     // Extract key data for a cleaner console view
-    if (sharedContext && (sharedContext.otp || sharedContext.resetLink)) {
-      // eslint-disable-next-line no-console
-      if (sharedContext.otp) console.log(`OTP: ${sharedContext.otp}`);
-      // eslint-disable-next-line no-console
-      if (sharedContext.resetLink) console.log(`Reset Link: ${sharedContext.resetLink}`);
+    const keysToLog = ['otp', 'resetLink', 'verificationLink', 'acceptLink'];
+    const found = keysToLog.filter((key) => sharedContext[key]);
+
+    if (found.length > 0) {
+      found.forEach((key) => {
+        // eslint-disable-next-line no-console
+        console.log(`${key.toUpperCase().replace('LINK', ' LINK')}: ${sharedContext[key]}`);
+      });
     } else {
+      // eslint-disable-next-line no-console
+      console.log(`Template: ${template}`);
       // eslint-disable-next-line no-console
       console.log(`Content: ${text || 'Check templates'}`);
     }

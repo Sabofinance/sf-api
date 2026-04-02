@@ -35,6 +35,9 @@ export class Deposit {
   @Column({ type: 'enum', enum: DepositStatus, default: DepositStatus.initiated })
   status!: DepositStatus;
 
+  @Column({ type: 'text', nullable: true })
+  rejection_reason!: string | null;
+
   @Column({ type: 'uuid', nullable: true })
   reviewed_by!: string | null;
 

@@ -84,6 +84,7 @@ export function createSwaggerSpec() {
               email_verified: { type: 'boolean' },
               phone_verified: { type: 'boolean' },
               kyc_status: { type: 'string', enum: ['unverified', 'pending', 'verified', 'rejected'] },
+              profile_picture_url: { type: 'string', nullable: true },
               is_suspended: { type: 'boolean' },
               created_at: { type: 'string', format: 'date-time' },
             },

@@ -122,18 +122,25 @@ export async function listSabits(req: Request, res: Response) {
   const { type, currency } = listSchema.parse(req.query);
 
   const sabits = await withTransaction(async (qr) => {
-    let query = `SELECT * FROM "sabits" WHERE "status" = 'active'`;
+    let query = `
+      SELECT 
+        s.*, 
+        u.username as user_username, 
+        u.profile_picture_url as user_profile_picture 
+      FROM "sabits" s 
+      JOIN "users" u ON s.user_id = u.id 
+      WHERE s."status" = 'active'`;
     const params = [];
     if (type) {
       params.push(type);
-      query += ` AND "type" = ${params.length}`;
+      query += ` AND s."type" = ${params.length}`;
     }
     if (currency) {
       params.push(currency);
-      query += ` AND "currency" = ${params.length}`;
+      query += ` AND s."currency" = ${params.length}`;
     }
-    query += ` ORDER BY "created_at" DESC`;
-    return (await qr.query(query, params)) as Sabit[];
+    query += ` ORDER BY s."created_at" DESC`;
+    return (await qr.query(query, params)) as Array<Sabit & { user_username: string; user_profile_picture: string | null }>;
   });
 
   return ok(res, { sabits });
@@ -160,7 +167,16 @@ export async function listSabits(req: Request, res: Response) {
 export async function getSabit(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
   const sabit = await withTransaction(async (qr) => {
-    const rows = (await qr.query(`SELECT * FROM "sabits" WHERE "id" = $1`, [id])) as Sabit[];
+    const rows = (await qr.query(
+      `SELECT 
+        s.*, 
+        u.username as user_username, 
+        u.profile_picture_url as user_profile_picture 
+      FROM "sabits" s 
+      JOIN "users" u ON s.user_id = u.id 
+      WHERE s."id" = $1`,
+      [id],
+    )) as Array<Sabit & { user_username: string; user_profile_picture: string | null }>;
     if (rows.length === 0) {
       throw new NotFoundError('No listing exists with that ID.', 'SABIT_NOT_FOUND');
     }

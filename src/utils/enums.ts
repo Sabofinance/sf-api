@@ -10,6 +10,7 @@ export enum DepositStatus {
   pending_review = 'pending_review',
   completed = 'completed',
   failed = 'failed',
+  expired = 'expired',
   rejected = 'rejected',
 }
 

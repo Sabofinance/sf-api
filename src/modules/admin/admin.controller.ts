@@ -13,6 +13,7 @@ import { User } from '../../database/entities/User';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
 import { NotificationService } from '../../services/notificationService';
+import { generateUsername } from '../../services/usernameService';
 import { WalletService } from '../../services/walletService';
 import { ok } from '../../utils/apiResponse';
 import { Currency, DepositStatus, KycStatus, LedgerType, NotificationType, UserRole } from '../../utils/enums';
@@ -318,10 +319,20 @@ export async function reinstateUser(req: Request, res: Response) {
 export async function listKycSubmissions(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
   const submissions = await withTransaction(async (qr) => {
-    return (await qr.query(`SELECT * FROM "kyc" ORDER BY "created_at" DESC LIMIT $1 OFFSET $2`, [
-      limit,
-      (parseInt(page) - 1) * parseInt(limit),
-    ])) as Kyc[];
+    return (await qr.query(
+      `SELECT 
+        k.*, 
+        u.name, 
+        u.username, 
+        u.email, 
+        u.phone, 
+        u.profile_picture_url 
+      FROM "kyc" k 
+      JOIN "users" u ON k.user_id = u.id 
+      ORDER BY k.created_at DESC 
+      LIMIT $1 OFFSET $2`,
+      [limit, (parseInt(page) - 1) * parseInt(limit)],
+    )) as Array<Kyc & { name: string; username: string; email: string; phone: string; profile_picture_url: string | null }>;
   });
   return ok(res, { submissions });
 }
@@ -700,7 +711,7 @@ export async function getDashboardStats(req: Request, res: Response) {
 
     // Pending actions
     const pendingDeposits = await qr.query(`
-      SELECT id, amount, currency, created_at 
+      SELECT id, amount, currency, rejection_reason, created_at 
       FROM "deposits" 
       WHERE status = 'pending_review' 
       ORDER BY created_at DESC 
@@ -754,7 +765,13 @@ export async function getDashboardStats(req: Request, res: Response) {
     `);
 
     const recentKyc = await qr.query(`
-      SELECT k.id, k.status, k.document_type, u.name as user_name
+      SELECT 
+        k.id, 
+        k.status, 
+        k.document_type, 
+        u.name as user_name, 
+        u.username as user_username, 
+        u.profile_picture_url as user_profile_picture
       FROM "kyc" k
       JOIN "users" u ON k.user_id = u.id
       ORDER BY k.created_at DESC
@@ -1027,6 +1044,15 @@ export async function listAllTransactions(req: Request, res: Response) {
  *         name: id
  *         required: true
  *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [reason]
+ *             properties:
+ *               reason: { type: string, example: "Invalid proof of payment" }
  *     responses:
  *       200:
  *         description: OK
@@ -1036,6 +1062,8 @@ export async function listAllTransactions(req: Request, res: Response) {
  */
 export async function rejectDeposit(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
+  const { reason } = z.object({ reason: z.string().min(5) }).parse(req.body);
+
   const deposit = await withTransaction(async (qr) => {
     const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [id])) as Deposit[];
     const dep = rows[0];
@@ -1045,10 +1073,11 @@ export async function rejectDeposit(req: Request, res: Response) {
       throw new AppError('INVALID_STATUS', 'Cannot reject a completed deposit', 400);
     }
 
-    await qr.query(`UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2 WHERE "id" = $3`, [
+    await qr.query(`UPDATE "deposits" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3 WHERE "id" = $4`, [
       DepositStatus.rejected,
+      reason,
       req.user!.id,
-      dep.id,
+      id,
     ]);
 
     const notificationService = new NotificationService();
@@ -1056,7 +1085,7 @@ export async function rejectDeposit(req: Request, res: Response) {
       queryRunner: qr,
       userId: dep.user_id,
       title: 'Deposit Rejected',
-      message: `Your manual deposit of ${dep.amount} ${dep.currency} has been rejected.`,
+      message: `Your manual deposit of ${dep.amount} ${dep.currency} has been rejected. Reason: ${reason}`,
       type: NotificationType.error,
       relatedId: dep.id,
     });
@@ -1193,7 +1222,7 @@ export async function acceptAdminInvite(req: Request, res: Response) {
     const user = userRows[0];
     if (!user) {
       // Invite remains unconsumed until a matching user is available.
-      return { accepted: false, inviteId: invite.id, invitedEmail: invite.invited_email };
+      return { accepted: false, inviteId: invite.id, invitedEmail: invite.invited_email, grantedRole: invite.granted_role };
     }
 
     await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [invite.granted_role, user.id]);
@@ -1212,7 +1241,14 @@ export async function acceptAdminInvite(req: Request, res: Response) {
   });
 
   if (!result.accepted) {
-    return ok(res, { message: 'Invite is valid. Register your account with the invited email to accept.' });
+    return ok(res, { 
+      message: 'Invite is valid. Please set up your account to complete.', 
+      setupRequired: true,
+      invite: {
+        email: result.invitedEmail,
+        role: result.grantedRole
+      }
+    });
   }
 
   const accepted = result as {
@@ -1231,6 +1267,101 @@ export async function acceptAdminInvite(req: Request, res: Response) {
   });
 
   return ok(res, { message: 'Invite accepted. Admin role granted.', inviteId: accepted.inviteId });
+}
+
+const adminSetupSchema = z.object({
+  token: z.string(),
+  name: z.string().min(2),
+  phone: z.string().min(7).max(32),
+  password: z.string().min(8),
+});
+
+/**
+ * @swagger
+ * /admin/invites/setup:
+ *   post:
+ *     summary: Complete admin account setup using an invite token
+ *     tags: [Admin]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token, name, phone, password]
+ *             properties:
+ *               token: { type: string }
+ *               name: { type: string, example: "Jane Doe" }
+ *               phone: { type: string, example: "+2348000000000" }
+ *               password: { type: string, example: "Password123!" }
+ *     responses:
+ *       201:
+ *         description: Admin account created
+ */
+export async function completeAdminSetup(req: Request, res: Response) {
+  const input = adminSetupSchema.parse(req.body);
+  const token_hash = crypto.createHash('sha256').update(input.token).digest('hex');
+
+  const result = await withTransaction(async (qr) => {
+    const inviteRows = (await qr.query(
+      `SELECT * FROM "admin_invites"
+       WHERE "token_hash" = $1 AND "consumed_at" IS NULL AND "expires_at" > now()
+       LIMIT 1
+       FOR UPDATE`,
+      [token_hash],
+    )) as Array<{
+      id: string;
+      inviter_id: string;
+      invited_email: string;
+      granted_role: UserRole | string;
+    }>;
+
+    const invite = inviteRows[0];
+    if (!invite) throw new AppError('INVITE_EXPIRED_OR_INVALID', 'Invite token is invalid or expired', 400);
+
+    const alreadyExists = (await qr.query(
+      `SELECT id FROM "users" WHERE "email" = $1 OR "phone" = $2`,
+      [invite.invited_email, input.phone]
+    )) as any[];
+
+    if (alreadyExists.length > 0) {
+      throw new AppError('USER_ALREADY_EXISTS', 'A user with this email or phone already exists.', 400);
+    }
+
+    const password_hash = await bcrypt.hash(input.password, 12);
+    const username = await generateUsername(input.name, qr);
+
+    const userRows = (await qr.query(
+      `INSERT INTO "users" ("id","name","username","email","phone","password_hash","email_verified","phone_verified","kyc_status","role","is_suspended","created_at")
+       VALUES (gen_random_uuid(), $1,$2,$3,$4,$5,true,true,'verified',$6,false, now())
+       RETURNING "id","name","email"`,
+      [input.name, username, invite.invited_email, input.phone, password_hash, invite.granted_role],
+    )) as Array<{ id: string; name: string; email: string }>;
+
+    const user = userRows[0];
+
+    await qr.query(
+      `UPDATE "admin_invites" SET "consumed_at" = now(), "consumed_by" = $1 WHERE "id" = $2`,
+      [user.id, invite.id],
+    );
+
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
+       VALUES (gen_random_uuid(), $1, 'ADMIN_INVITE_ACCEPTED', 'user', $2, $3, now())`,
+      [invite.inviter_id, user.id, JSON.stringify({ inviteId: invite.id, acceptedUserId: user.id, setup: true })],
+    );
+
+    return { inviteId: invite.id, userId: user.id, name: user.name, email: user.email };
+  });
+
+  await sendEmail({
+    to: result.email,
+    subject: 'Admin access granted - Sabo Finance',
+    template: 'admin-invite-accepted',
+    context: { name: result.name },
+  });
+
+  return ok(res, { message: 'Admin account created and role granted.', inviteId: result.inviteId });
 }
 
 /**
@@ -1334,11 +1465,53 @@ export async function upgradeAdminToSuperAdmin(req: Request, res: Response) {
 
 /**
  * @swagger
+ * /admin/admins:
+ *   get:
+ *     summary: List all administrators (super admin only)
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function listAdmins(req: Request, res: Response) {
+  const { page, limit } = paginationSchema.parse(req.query);
+  const admins = await withTransaction(async (qr) => {
+    return (await qr.query(
+      `SELECT "id","name","username","email","phone","role","is_suspended","kyc_status","created_at"
+       FROM "users"
+       WHERE "role" = $1 OR "role" = $2
+       ORDER BY "created_at" DESC
+       LIMIT $3 OFFSET $4`,
+      [UserRole.admin, UserRole.super_admin, limit, (parseInt(page) - 1) * parseInt(limit)],
+    )) as Array<Record<string, unknown>>;
+  });
+  return ok(res, { admins });
+}
+
+/**
+ * @swagger
  * /admin/profile:
  *   get:
  *     summary: Get admin profile
  *     tags: [Admin]
  *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
 export async function getAdminProfile(req: Request, res: Response) {
   const adminId = req.user!.id;
@@ -1417,6 +1590,12 @@ export async function updateAdminProfilePicture(req: Request, res: Response) {
  *       - in: query
  *         name: limit
  *         schema: { type: integer, default: 20 }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
 export async function listAdminLogs(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
@@ -1437,4 +1616,3 @@ export async function listAdminLogs(req: Request, res: Response) {
 
   return ok(res, { logs });
 }
-

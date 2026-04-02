@@ -323,3 +323,45 @@ export async function submitForeignDeposit(req: Request, res: Response) {
   return created(res, { deposit });
 }
 
+/**
+ * @swagger
+ * /deposits/{id}/cancel:
+ *   post:
+ *     summary: Cancel an initiated deposit
+ *     tags: [Deposits]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: OK
+ */
+export async function cancelDeposit(req: Request, res: Response) {
+  const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+
+  const deposit = await withTransaction(async (qr) => {
+    const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 AND "user_id" = $2 LIMIT 1 FOR UPDATE`, [
+      id,
+      req.user!.id,
+    ])) as Deposit[];
+    const dep = rows[0];
+
+    if (!dep) throw new NotFoundError('Deposit not found');
+    if (dep.status !== DepositStatus.initiated) {
+      throw new AppError('INVALID_STATUS', 'Only initiated deposits can be cancelled.', 400);
+    }
+
+    await qr.query(`UPDATE "deposits" SET "status" = $1 WHERE "id" = $2`, [
+      DepositStatus.failed, // Using failed as we don't have a cancelled status for deposits yet, or use expired.
+      dep.id,
+    ]);
+
+    return { ...dep, status: DepositStatus.failed };
+  });
+
+  return ok(res, { deposit });
+}
+

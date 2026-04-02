@@ -2,6 +2,7 @@ import bcrypt from 'bcrypt';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { cloudinary } from '../../config/cloudinary';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
 import { verifyPin } from '../../services/pinService';
@@ -176,6 +177,56 @@ export async function verifyTransactionPin(req: Request, res: Response) {
   });
 
   return ok(res, { isValid });
+}
+
+/**
+ * @swagger
+ * /account/profile/picture:
+ *   post:
+ *     summary: Update user profile picture
+ *     tags: [Account]
+ *     security: [{ BearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [file]
+ *             properties:
+ *               file: { type: string, format: binary }
+ *     responses:
+ *       200:
+ *         description: Picture updated
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function updateProfilePicture(req: Request, res: Response) {
+  const file = req.file as Express.Multer.File | undefined;
+  if (!file) throw new AppError('FILE_REQUIRED', 'Profile picture file is required', 400);
+
+  const uploaded = await cloudinary.uploader.upload(`data:${file.mimetype};base64,${file.buffer.toString('base64')}`, {
+    folder: 'sabo-finance/user-profile',
+    resource_type: 'image',
+  });
+
+  const result = await withTransaction(async (qr) => {
+    await qr.query(`UPDATE "users" SET "profile_picture_url" = $1 WHERE "id" = $2`, [
+      uploaded.secure_url,
+      req.user!.id,
+    ]);
+
+    await qr.query(
+      `INSERT INTO "admin_logs" ("id", "admin_id", "action", "target_type", "target_id", "details", "created_at")
+       VALUES (gen_random_uuid(), $1, 'PROFILE_PICTURE_UPDATED', 'user', $1, $2, now())`,
+      [req.user!.id, JSON.stringify({ hasPicture: true })],
+    );
+
+    return { profile_picture_url: uploaded.secure_url };
+  });
+
+  return ok(res, { ...result });
 }
 
 function generateOtp() {

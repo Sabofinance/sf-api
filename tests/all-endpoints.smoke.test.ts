@@ -356,7 +356,8 @@ describe('All Endpoints Smoke', () => {
 
     const adminDepReject = await request(app)
       .post(`/admin/deposits/${depForAdmin2.id}/reject`)
-      .set('Authorization', `Bearer ${adminToken}`);
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'Invalid payment proof.' });
     expect(adminDepReject.status).toBe(200);
   });
 });

@@ -12,10 +12,12 @@ import {
   adminVerifyOtp,
   inviteAdmin,
   acceptAdminInvite,
+  completeAdminSetup,
   approveDeposit,
   rejectDeposit,
   listUsers,
   getUser,
+  listAdmins,
   suspendUser,
   reinstateUser,
   removeAdmin,
@@ -45,11 +47,13 @@ adminRouter.post('/auth/verify-otp', asyncHandler(adminVerifyOtp));
 
 // Public: accept admin invite token
 adminRouter.get('/invites/accept', asyncHandler(acceptAdminInvite));
+adminRouter.post('/invites/setup', asyncHandler(completeAdminSetup));
 
 // Protected Admin Routes
 adminRouter.use(authMiddleware, adminMiddleware);
 
 // Super-admin only: invite/remove/upgrade
+adminRouter.get('/admins', superAdminMiddleware, asyncHandler(listAdmins));
 adminRouter.post('/invites', inviteRateLimiter, superAdminMiddleware, asyncHandler(inviteAdmin));
 adminRouter.post('/admins/:id/remove', superAdminMiddleware, asyncHandler(removeAdmin));
 adminRouter.post('/admins/:id/upgrade', superAdminMiddleware, asyncHandler(upgradeAdminToSuperAdmin));

@@ -6,6 +6,7 @@ import { requireVerifiedUser } from '../../middleware/kycMiddleware';
 import { asyncHandler } from '../../utils/asyncHandler';
 
 import {
+  cancelDeposit,
   flutterwaveWebhook,
   getDeposit,
   initiateNgnDeposit,
@@ -21,6 +22,7 @@ depositsRouter.post('/ngn/initiate', authMiddleware, requireVerifiedUser, asyncH
 depositsRouter.post('/foreign', authMiddleware, requireVerifiedUser, upload.single('proof'), asyncHandler(submitForeignDeposit));
 depositsRouter.get('/', authMiddleware, asyncHandler(listDeposits));
 depositsRouter.get('/:id', authMiddleware, asyncHandler(getDeposit));
+depositsRouter.post('/:id/cancel', authMiddleware, asyncHandler(cancelDeposit));
 
 export const webhooksRouter = Router();
 webhooksRouter.post('/flutterwave', asyncHandler(flutterwaveWebhook));

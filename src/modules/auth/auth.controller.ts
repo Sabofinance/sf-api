@@ -93,7 +93,7 @@ export async function register(req: Request, res: Response) {
     const rows = (await qr.query(
       `INSERT INTO "users" ("id","name","username","email","phone","password_hash","email_verified","phone_verified","kyc_status","role","is_suspended","created_at")
        VALUES (gen_random_uuid(), $1,$2,$3,$4,$5,false,false,'unverified',$6,false, now())
-       RETURNING "id","name","username","email","phone","email_verified","phone_verified","kyc_status","role","is_suspended","created_at"`,
+       RETURNING "id","name","username","email","phone","email_verified","phone_verified","kyc_status","role","profile_picture_url","is_suspended","created_at"`,
       [input.name, username, input.email.toLowerCase(), input.phone, password_hash, UserRole.user],
     )) as Array<Record<string, unknown>>;
 
@@ -391,6 +391,7 @@ export async function getMe(req: Request, res: Response) {
          "kyc_status",
          "transaction_pin_set",
          "role", 
+         "profile_picture_url",
          "is_suspended", 
          "created_at" 
        FROM "users" 
