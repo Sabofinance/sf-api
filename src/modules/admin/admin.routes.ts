@@ -31,6 +31,7 @@ import {
   listAllDeposits,
   listAllDisputes,
   listAllTransactions,
+  listAllTrades,
   verifyFlutterwaveDeposit,
 } from './admin.controller';
 
@@ -80,6 +81,7 @@ adminRouter.post('/deposits/:id/verify-flutterwave', asyncHandler(verifyFlutterw
 adminRouter.get('/dashboard', asyncHandler(getDashboardStats));
 adminRouter.get('/analytics/impact', asyncHandler(getImpactAnalytics));
 adminRouter.get('/deposits', asyncHandler(listAllDeposits));
+adminRouter.get('/trades', asyncHandler(listAllTrades));
 adminRouter.get('/disputes', asyncHandler(listAllDisputes));
 adminRouter.get('/transactions', asyncHandler(listAllTransactions));
 

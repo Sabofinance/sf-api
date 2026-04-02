@@ -28,6 +28,115 @@ const sellerConfirmSchema = z.object({
   pin: z.string().length(6).regex(/^\d{6}$/, 'PIN must be 6 digits'),
 });
 
+const listTradesSchema = z.object({
+  page: z.string().regex(/^\d+$/).default('1'),
+  limit: z.string().regex(/^\d+$/).default('20'),
+  status: z.nativeEnum(TradeStatus).optional(),
+});
+
+/**
+ * @swagger
+ * /trades:
+ *   get:
+ *     summary: List all trades for the authenticated user
+ *     tags: [Trades]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: string, default: "1" }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: string, default: "20" }
+ *       - in: query
+ *         name: status
+ *         schema: { type: string, enum: ["initiated", "confirmed", "escrowed", "completed", "cancelled", "disputed"] }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function listUserTrades(req: Request, res: Response) {
+  if (!req.user) throw new UnauthorizedError();
+  const { page, limit, status } = listTradesSchema.parse(req.query);
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const trades = await withTransaction(async (qr) => {
+    let query = `
+      SELECT t.*, 
+             s.currency as sabit_currency, s.rate_ngn as sabit_rate,
+             u_buyer.name as buyer_name, u_seller.name as seller_name
+      FROM "trades" t
+      JOIN "sabits" s ON t.sabit_id = s.id
+      JOIN "users" u_buyer ON t.buyer_id = u_buyer.id
+      JOIN "users" u_seller ON t.seller_id = u_seller.id
+      WHERE (t.buyer_id = $1 OR t.seller_id = $1)
+    `;
+    const params: any[] = [req.user!.id];
+
+    if (status) {
+      query += ` AND t.status = $2`;
+      params.push(status);
+    }
+
+  query += ` ORDER BY t.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(parseInt(limit), offset);
+
+    return (await qr.query(query, params)) as Trade[];
+  });
+
+  return ok(res, { trades });
+}
+
+/**
+ * @swagger
+ * /trades/{id}:
+ *   get:
+ *     summary: Get a single trade by ID
+ *     tags: [Trades]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function getTrade(req: Request, res: Response) {
+  if (!req.user) throw new UnauthorizedError();
+  const { id } = idSchema.parse(req.params);
+
+  const trade = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT t.*, 
+              s.currency as sabit_currency, s.rate_ngn as sabit_rate,
+              u_buyer.name as buyer_name, u_seller.name as seller_name
+       FROM "trades" t
+       JOIN "sabits" s ON t.sabit_id = s.id
+       JOIN "users" u_buyer ON t.buyer_id = u_buyer.id
+       JOIN "users" u_seller ON t.seller_id = u_seller.id
+       WHERE t.id = $1 AND (t.buyer_id = $2 OR t.seller_id = $2)
+       LIMIT 1`,
+      [id, req.user!.id],
+    )) as Trade[];
+
+    return rows[0];
+  });
+
+  if (!trade) {
+    throw new NotFoundError('No trade exists with that ID or you are not a party to it.', 'TRADE_NOT_FOUND');
+  }
+
+  return ok(res, { trade });
+}
+
 /**
  * @swagger
  * /trades/initiate:
@@ -83,9 +192,35 @@ export async function initiateTrade(req: Request, res: Response) {
     await requirePinSet(buyerId, qr);
     await requirePinSet(sellerId, qr, 'The seller has not set a transaction PIN. This trade cannot proceed.');
 
-    const pinValid = await verifyPin(buyerId, input.pin, qr);
+    const pinValid = await verifyPin(req.user!.id, input.pin, qr);
     if (!pinValid) {
       throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);
+    }
+
+    const walletService = new WalletService();
+    const totalNgn = amount.times(new Decimal(sabit.rate_ngn));
+
+    // Lock the other party's funds (the one who clicked "buy")
+    if (sabit.type === SabitType.SELL) {
+      // req.user!.id is the buyer, they are paying NGN. Lock their NGN.
+      await walletService.lock({
+        queryRunner: qr,
+        userId: req.user!.id,
+        currency: Currency.NGN,
+        amount: totalNgn.toFixed(2),
+        type: LedgerType.escrow_hold,
+        initiatedBy: req.user!.id,
+      });
+    } else {
+      // req.user!.id is the seller, they are giving foreign currency. Lock their foreign currency.
+      await walletService.lock({
+        queryRunner: qr,
+        userId: req.user!.id,
+        currency: sabit.currency,
+        amount: input.amount,
+        type: LedgerType.escrow_hold,
+        initiatedBy: req.user!.id,
+      });
     }
 
     const newAvailableAmount = new Decimal(sabit.available_amount).minus(amount);
@@ -95,11 +230,10 @@ export async function initiateTrade(req: Request, res: Response) {
     ]);
 
     const reference = await nextReference(qr, 'TXN');
-    const totalNgn = amount.times(new Decimal(sabit.rate_ngn));
 
     const tradeRows = (await qr.query(
       `INSERT INTO "trades" ("id","sabit_id","buyer_id","seller_id","currency","amount","rate_ngn","total_ngn","reference", "buyer_pin_verified", "pin_expires_at", "seller_notified_at")
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, true, NOW() + INTERVAL '10 minutes', NOW())
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, true, NOW() + INTERVAL '30 minutes', NOW())
        RETURNING *`,
       [sabit.id, buyerId, sellerId, sabit.currency, input.amount, sabit.rate_ngn, totalNgn.toFixed(2), reference],
     )) as Trade[];
@@ -120,7 +254,7 @@ export async function initiateTrade(req: Request, res: Response) {
         queryRunner: qr,
         userId: trade.seller_id,
         title: 'New Trade Request',
-        message: `A buyer wants to trade ${trade.amount} ${trade.currency} at ₦${trade.rate_ngn}. You have 10 minutes to confirm.`,
+        message: `A buyer wants to trade ${trade.amount} ${trade.currency} at ₦${trade.rate_ngn}. You have 30 minutes to confirm.`,
         type: NotificationType.info,
         relatedId: trade.id,
     });
@@ -200,11 +334,34 @@ export async function sellerConfirmTrade(req: Request, res: Response) {
       // Auto-cancel
       await qr.query(`UPDATE "trades" SET "status" = $1 WHERE "id" = $2`, [TradeStatus.cancelled, id]);
       
+      const walletService = new WalletService();
+      
+      // Restore amount to sabit
       const sabitRows = (await qr.query(`SELECT * FROM "sabits" WHERE "id" = $1 FOR UPDATE`, [trade.sabit_id])) as Sabit[];
       if (sabitRows.length > 0) {
         const sabit = sabitRows[0];
         const restoredAmount = new Decimal(sabit.available_amount).plus(new Decimal(trade.amount));
         await qr.query(`UPDATE "sabits" SET "available_amount" = $1 WHERE "id" = $2`, [restoredAmount.toFixed(2), sabit.id]);
+      }
+
+      // Unlock funds for the person who clicked "buy"
+      // Note: the Sabit creator's funds are already locked and stay locked with the Sabit listing.
+      // We only unlock the funds that were locked during initiateTrade.
+      const sabit = (await qr.query(`SELECT "type" FROM "sabits" WHERE "id" = $1`, [trade.sabit_id])) as Sabit[];
+      if (sabit.length > 0) {
+        const whoClickedBuyId = sabit[0].type === SabitType.SELL ? trade.buyer_id : trade.seller_id;
+        const currencyToUnlock = sabit[0].type === SabitType.SELL ? Currency.NGN : trade.currency;
+        const amountToUnlock = sabit[0].type === SabitType.SELL ? trade.total_ngn : trade.amount;
+        
+        await walletService.unlock({
+          queryRunner: qr,
+          userId: whoClickedBuyId,
+          currency: currencyToUnlock,
+          amount: amountToUnlock,
+          type: LedgerType.escrow_release,
+          initiatedBy: 'system',
+          reference: `${trade.reference}-UL`,
+        });
       }
       
       const buyerRows = await qr.query(`SELECT email FROM users WHERE id = $1`, [trade.buyer_id]);
@@ -227,7 +384,7 @@ export async function sellerConfirmTrade(req: Request, res: Response) {
         });
       }
 
-      throw new AppError('PIN_EXPIRED', 'The 10-minute confirmation window has expired. This trade has been cancelled.', 400);
+      throw new AppError('PIN_EXPIRED', 'The 30-minute confirmation window has expired. This trade has been cancelled.', 400);
     }
 
     const pinValid = await verifyPin(trade.seller_id, pin, qr);
@@ -235,20 +392,58 @@ export async function sellerConfirmTrade(req: Request, res: Response) {
       throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);
     }
 
-    await qr.query(`UPDATE "trades" SET "seller_pin_verified" = true, "status" = $1 WHERE "id" = $2`, [TradeStatus.confirmed, id]);
+    const walletService = new WalletService();
+    
+    // PERFORM SETTLEMENT
+    // 1. Transfer locked NGN from buyer to seller
+    await walletService.transferFromLocked({
+      queryRunner: qr,
+      fromUserId: trade.buyer_id,
+      toUserId: trade.seller_id,
+      currency: Currency.NGN,
+      amount: trade.total_ngn,
+      type: LedgerType.trade_credit,
+      initiatedBy: req.user!.id,
+      relatedId: trade.id,
+      reference: `${trade.reference}-NGN`,
+    });
+
+    // 2. Transfer locked foreign currency from seller to buyer
+    await walletService.transferFromLocked({
+      queryRunner: qr,
+      fromUserId: trade.seller_id,
+      toUserId: trade.buyer_id,
+      currency: trade.currency,
+      amount: trade.amount,
+      type: LedgerType.trade_credit,
+      initiatedBy: req.user!.id,
+      relatedId: trade.id,
+      reference: `${trade.reference}-FC`,
+    });
+
+    await qr.query(`UPDATE "trades" SET "seller_pin_verified" = true, "status" = $1, "completed_at" = NOW() WHERE "id" = $2`, [TradeStatus.completed, id]);
 
     const notificationService = new NotificationService();
     await notificationService.createNotification({
       queryRunner: qr,
       userId: trade.buyer_id,
-      title: 'Trade Confirmed',
-      message: 'The seller has confirmed the trade. Payment is now in progress.',
+      title: 'Trade Completed',
+      message: 'The seller has confirmed the trade. Funds have been settled to your wallet.',
+      type: NotificationType.success,
+      relatedId: trade.id,
+    });
+
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: trade.seller_id,
+      title: 'Trade Completed',
+      message: 'You have successfully confirmed and completed the trade.',
       type: NotificationType.success,
       relatedId: trade.id,
     });
   });
 
-  return ok(res, { message: 'Trade confirmed successfully' });
+  return ok(res, { message: 'Trade confirmed and settled successfully' });
 }
 
 /**

@@ -899,6 +899,36 @@ export async function getImpactAnalytics(req: Request, res: Response) {
 
 /**
  * @swagger
+ * /admin/trades:
+ *   get:
+ *     summary: List all trades across the platform
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function listAllTrades(req: Request, res: Response) {
+  const { page, limit } = paginationSchema.parse(req.query);
+  const trades = await withTransaction(async (qr) => {
+    return (await qr.query(
+      `SELECT t.*, b.name as buyer_name, s.name as seller_name 
+       FROM "trades" t 
+       JOIN "users" b ON t.buyer_id = b.id 
+       JOIN "users" s ON t.seller_id = s.id 
+       ORDER BY t.created_at DESC 
+       LIMIT $1 OFFSET $2`,
+      [parseInt(limit), (parseInt(page) - 1) * parseInt(limit)],
+    )) as Array<Record<string, unknown>>;
+  });
+  return ok(res, { trades });
+}
+
+/**
+ * @swagger
  * /admin/deposits:
  *   get:
  *     summary: List all deposits across the platform

@@ -349,8 +349,8 @@ export async function acceptBid(req: Request, res: Response) {
     const tradeReference = await nextReference(qr, 'TXN');
 
     const tradeRows = await qr.query(
-      `INSERT INTO "trades" ("id", "sabit_id", "buyer_id", "seller_id", "currency", "amount", "rate_ngn", "total_ngn", "reference", "status", "buyer_pin_verified", "seller_pin_verified", "pin_expires_at", "bid_id", "created_at")
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, true, true, NOW() + INTERVAL '10 minutes', $10, now())
+      `INSERT INTO "trades" ("id", "sabit_id", "buyer_id", "seller_id", "currency", "amount", "rate_ngn", "total_ngn", "reference", "status", "buyer_pin_verified", "seller_pin_verified", "completed_at", "bid_id", "created_at")
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, true, true, NOW(), $10, now())
        RETURNING *`,
       [
         sabit.id,
@@ -361,26 +361,53 @@ export async function acceptBid(req: Request, res: Response) {
         bid.proposed_rate_ngn,
         bid.total_ngn_at_bid_rate,
         tradeReference,
-        TradeStatus.escrowed,
+        TradeStatus.completed,
         bid.id,
       ]
     );
     const newTrade = tradeRows[0];
 
+    // PERFORM SETTLEMENT
+    // 1. Transfer locked NGN from buyer to seller
+    await walletService.transferFromLocked({
+      queryRunner: qr,
+      fromUserId: bid.buyer_id,
+      toUserId: bid.seller_id,
+      currency: Currency.NGN,
+      amount: bid.total_ngn_at_bid_rate,
+      type: LedgerType.trade_credit,
+      initiatedBy: req.user!.id,
+      relatedId: newTrade.id,
+      reference: `${tradeReference}-NGN`,
+    });
+
+    // 2. Transfer locked foreign currency from seller to buyer
+    await walletService.transferFromLocked({
+      queryRunner: qr,
+      fromUserId: bid.seller_id,
+      toUserId: bid.buyer_id,
+      currency: bid.currency,
+      amount: bid.amount,
+      type: LedgerType.trade_credit,
+      initiatedBy: req.user!.id,
+      relatedId: newTrade.id,
+      reference: `${tradeReference}-FC`,
+    });
+
     const notificationService = new NotificationService();
     await notificationService.createNotification({
       queryRunner: qr,
       userId: bid.buyer_id,
-      title: 'Bid Accepted',
-      message: `Your bid of ₦${bid.proposed_rate_ngn} per ${bid.currency} has been accepted. Complete your payment now.`,
+      title: 'Trade Completed',
+      message: `Your bid of ₦${bid.proposed_rate_ngn} per ${bid.currency} has been accepted and settled.`,
       type: NotificationType.success,
       relatedId: newTrade.id,
     });
     await notificationService.createNotification({
       queryRunner: qr,
       userId: bid.seller_id,
-      title: 'Bid Accepted',
-      message: `You accepted the bid. Trade ${tradeReference} is now in progress.`,
+      title: 'Trade Completed',
+      message: `You accepted the bid. Trade ${tradeReference} has been settled.`,
       type: NotificationType.success,
       relatedId: newTrade.id,
     });

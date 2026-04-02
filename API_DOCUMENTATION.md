@@ -541,6 +541,53 @@ Yes
 ## Trades
 
 ### Endpoint
+`GET /trades`
+
+### Description
+Lists all trades for the authenticated user (either as buyer or seller).
+
+### Parameters
+- `page` (query, optional): Page number (default: 1)
+- `limit` (query, optional): Items per page (default: 20)
+- `status` (query, optional): Filter by status (e.g., "completed", "escrowed")
+
+### Response Example
+```json
+{
+  "success": true,
+  "data": {
+    "trades": [...]
+  }
+}
+```
+
+### Endpoint
+`GET /trades/:id`
+
+### Description
+Gets details of a single trade by its ID. Only the buyer or seller of the trade can access it.
+
+### Parameters
+- `id` (path): The trade UUID.
+
+### Response Example
+```json
+{
+  "success": true,
+  "data": {
+    "trade": {
+      "id": "...",
+      "reference": "...",
+      "status": "...",
+      "buyer_name": "...",
+      "seller_name": "...",
+      ...
+    }
+  }
+}
+```
+
+### Endpoint
 `POST /trades/initiate`
 
 ### Description
@@ -778,6 +825,29 @@ Yes (Admin)
 
 ### Description
 Rejects a pending manual deposit.
+
+### Auth Required
+Yes (Admin)
+
+### Endpoint
+`GET /admin/trades`
+
+### Description
+Lists all trades across the platform (Admin only).
+
+### Parameters
+- `page` (query, optional): Page number (default: 1)
+- `limit` (query, optional): Items per page (default: 20)
+
+### Response Example
+```json
+{
+  "success": true,
+  "data": {
+    "trades": [...]
+  }
+}
+```
 
 ### Auth Required
 Yes (Admin)

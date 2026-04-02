@@ -283,6 +283,65 @@ export class WalletService {
     return reference;
   }
 
+  async transferFromLocked(params: {
+    queryRunner: QueryRunner;
+    fromUserId: string;
+    toUserId: string;
+    currency: Currency;
+    amount: Money;
+    type: LedgerType;
+    initiatedBy: string;
+    relatedId?: string | null;
+    reference?: string;
+  }) {
+    const { queryRunner, fromUserId, toUserId, currency, type, initiatedBy, relatedId } = params;
+    const amount = asDecimal(params.amount);
+    assertNonNegative(amount, 'INVALID_AMOUNT');
+
+    const fromWallet = await this.getWalletForUpdate(queryRunner, fromUserId, currency);
+    const toWallet = await this.getWalletForUpdate(queryRunner, toUserId, currency);
+
+    if (asDecimal(fromWallet.locked_balance).lt(amount))
+      throw new AppError('INSUFFICIENT_LOCKED', 'Insufficient locked funds to transfer.', 400);
+
+    const newFromLocked = asDecimal(fromWallet.locked_balance).minus(amount);
+    const newToBalance = asDecimal(toWallet.balance).plus(amount);
+
+    await queryRunner.query(
+      `UPDATE "wallets" SET "locked_balance" = $1, "updated_at" = now() WHERE "id" = $2`,
+      [newFromLocked.toFixed(2), fromWallet.id]
+    );
+
+    await queryRunner.query(
+      `UPDATE "wallets" SET "balance" = $1, "updated_at" = now() WHERE "id" = $2`,
+      [newToBalance.toFixed(2), toWallet.id]
+    );
+
+    const reference = params.reference ?? await nextReference(queryRunner, 'TXN');
+
+    // Debit from "fromUserId" (as a locked deduction)
+    await queryRunner.query(
+      `INSERT INTO "ledger" ("id","reference","user_id","wallet_id","type","amount","currency","balance_before","balance_after","initiated_by","related_id","status","created_at")
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'completed', now())`,
+      [
+        `${reference}-DR`, fromUserId, fromWallet.id, type, amount.negated().toFixed(2), currency,
+        fromWallet.locked_balance, newFromLocked.toFixed(2), initiatedBy, relatedId ?? null
+      ]
+    );
+
+    // Credit to "toUserId"
+    await queryRunner.query(
+      `INSERT INTO "ledger" ("id","reference","user_id","wallet_id","type","amount","currency","balance_before","balance_after","initiated_by","related_id","status","created_at")
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'completed', now())`,
+      [
+        `${reference}-CR`, toUserId, toWallet.id, type, amount.toFixed(2), currency,
+        toWallet.balance, newToBalance.toFixed(2), initiatedBy, relatedId ?? null
+      ]
+    );
+
+    return reference;
+  }
+
   private async getWalletForUpdate(queryRunner: QueryRunner, userId: string, currency: Currency) {
     const rows = (await queryRunner.query(
       `SELECT "id","balance","locked_balance", "escrow_balance" FROM "wallets" WHERE "user_id" = $1 AND "currency" = $2 FOR UPDATE`,
