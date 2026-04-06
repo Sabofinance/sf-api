@@ -8,7 +8,10 @@ import { z } from 'zod';
 import { env } from '../../config/env';
 import { cloudinary } from '../../config/cloudinary';
 import { Deposit } from '../../database/entities/Deposit';
+import { Dispute } from '../../database/entities/Dispute';
 import { Kyc } from '../../database/entities/Kyc';
+import { Sabit } from '../../database/entities/Sabit';
+import { Trade } from '../../database/entities/Trade';
 import { User } from '../../database/entities/User';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
@@ -16,7 +19,7 @@ import { NotificationService } from '../../services/notificationService';
 import { generateUsername } from '../../services/usernameService';
 import { WalletService } from '../../services/walletService';
 import { ok } from '../../utils/apiResponse';
-import { Currency, DepositStatus, KycStatus, LedgerType, NotificationType, UserRole } from '../../utils/enums';
+import { Currency, DepositStatus, DisputeStatus, KycStatus, LedgerType, NotificationType, TradeStatus, UserRole } from '../../utils/enums';
 import { AppError, NotFoundError } from '../../utils/errors';
 
 const loginSchema = z.object({
@@ -363,7 +366,7 @@ export async function approveKyc(req: Request, res: Response) {
     const kyc = kycRows[0];
     if (!kyc) throw new NotFoundError('KYC submission not found');
 
-    await qr.query(`UPDATE "kyc" SET "status" = $1, "reviewed_by" = $2 WHERE "id" = $3`, [
+    await qr.query(`UPDATE "kyc" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`, [
       KycStatus.verified,
       req.user!.id,
       id,
@@ -433,7 +436,7 @@ export async function rejectKyc(req: Request, res: Response) {
     const kyc = kycRows[0];
     if (!kyc) throw new NotFoundError('KYC submission not found');
 
-    await qr.query(`UPDATE "kyc" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3 WHERE "id" = $4`, [
+    await qr.query(`UPDATE "kyc" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3, "reviewed_at" = NOW() WHERE "id" = $4`, [
       KycStatus.rejected,
       reason,
       req.user!.id,
@@ -514,7 +517,7 @@ export async function approveDeposit(req: Request, res: Response) {
       reference: dep.reference,
     });
 
-    await qr.query(`UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2 WHERE "id" = $3`, [
+    await qr.query(`UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`, [
       DepositStatus.completed,
       req.user!.id,
       dep.id,
@@ -637,7 +640,7 @@ export async function verifyFlutterwaveDeposit(req: Request, res: Response) {
       reference: dep.reference,
     });
 
-    await qr.query(`UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2 WHERE "id" = $3`, [
+    await qr.query(`UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`, [
       DepositStatus.completed,
       req.user!.id,
       dep.id,
@@ -1003,6 +1006,181 @@ export async function listAllDisputes(req: Request, res: Response) {
   return ok(res, { disputes });
 }
 
+const resolveDisputeSchema = z.object({
+  favor: z.enum(['buyer', 'seller']),
+  notes: z.string().min(10),
+});
+
+/**
+ * @swagger
+ * /admin/disputes/{id}/resolve:
+ *   post:
+ *     summary: Resolve a dispute (Admin only)
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [favor, notes]
+ *             properties:
+ *               favor: { type: string, enum: [buyer, seller] }
+ *               notes: { type: string, example: "Buyer provided valid payment proof." }
+ *     responses:
+ *       200:
+ *         description: Dispute resolved
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function resolveDispute(req: Request, res: Response) {
+  const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+  const { favor, notes } = resolveDisputeSchema.parse(req.body);
+
+  const walletService = new WalletService();
+
+  const result = await withTransaction(async (qr) => {
+    const disputeRows = (await qr.query(
+      `SELECT * FROM "disputes" WHERE "id" = $1 FOR UPDATE`,
+      [id],
+    )) as Dispute[];
+    const dispute = disputeRows[0];
+    if (!dispute) throw new NotFoundError('No dispute exists with that ID.', 'DISPUTE_NOT_FOUND');
+    if (dispute.status !== DisputeStatus.open) {
+      throw new AppError('INVALID_STATUS', 'This dispute has already been resolved.', 400);
+    }
+
+    const tradeRows = (await qr.query(
+      `SELECT * FROM "trades" WHERE "id" = $1 FOR UPDATE`,
+      [dispute.trade_id],
+    )) as Trade[];
+    const trade = tradeRows[0];
+    if (!trade) throw new NotFoundError('The trade associated with this dispute no longer exists.', 'TRADE_NOT_FOUND');
+    if (trade.status !== TradeStatus.disputed) {
+      throw new AppError('INVALID_TRADE_STATUS', 'The trade is not in a disputed state.', 400);
+    }
+
+    const refId = id.slice(0, 8);
+
+    if (favor === 'buyer') {
+      // Refund buyer's locked NGN back to them
+      await walletService.unlock({
+        queryRunner: qr,
+        userId: trade.buyer_id,
+        currency: Currency.NGN,
+        amount: trade.total_ngn,
+        type: LedgerType.escrow_release,
+        initiatedBy: req.user!.id,
+        relatedId: trade.id,
+        reference: `DIS-REF-${refId}`,
+      });
+
+      // Restore sabit available amount
+      const sabitRows = (await qr.query(
+        `SELECT * FROM "sabits" WHERE "id" = $1 FOR UPDATE`,
+        [trade.sabit_id],
+      )) as Sabit[];
+      if (sabitRows.length > 0) {
+        const sabit = sabitRows[0];
+        const restored = (parseFloat(sabit.available_amount) + parseFloat(trade.amount)).toFixed(2);
+        const restoredStatus = sabit.status === 'completed' ? 'active' : sabit.status;
+        await qr.query(
+          `UPDATE "sabits" SET "available_amount" = $1, "status" = $2 WHERE "id" = $3`,
+          [restored, restoredStatus, sabit.id],
+        );
+      }
+
+      await qr.query(`UPDATE "trades" SET "status" = $1 WHERE "id" = $2`, [TradeStatus.cancelled, trade.id]);
+    } else {
+      // Seller wins: transfer buyer's locked NGN to seller as compensation
+      await walletService.transferFromLocked({
+        queryRunner: qr,
+        fromUserId: trade.buyer_id,
+        toUserId: trade.seller_id,
+        currency: Currency.NGN,
+        amount: trade.total_ngn,
+        type: LedgerType.trade_credit,
+        initiatedBy: req.user!.id,
+        relatedId: trade.id,
+        reference: `DIS-SET-${refId}`,
+      });
+
+      await qr.query(
+        `UPDATE "trades" SET "status" = $1, "completed_at" = NOW() WHERE "id" = $2`,
+        [TradeStatus.completed, trade.id],
+      );
+    }
+
+    // Resolve the dispute record
+    await qr.query(
+      `UPDATE "disputes"
+       SET "status" = $1, "resolved_by_id" = $2, "resolution_notes" = $3, "resolved_at" = NOW()
+       WHERE "id" = $4`,
+      [DisputeStatus.resolved, req.user!.id, notes, id],
+    );
+
+    // Notify both parties
+    const notificationService = new NotificationService();
+    const buyerMsg = favor === 'buyer'
+      ? `Your dispute for trade ${trade.reference} was resolved in your favour. Your funds have been returned.`
+      : `The dispute for trade ${trade.reference} was resolved in the seller's favour.`;
+    const sellerMsg = favor === 'seller'
+      ? `The dispute for trade ${trade.reference} was resolved in your favour.`
+      : `The dispute for trade ${trade.reference} was resolved in the buyer's favour.`;
+
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: trade.buyer_id,
+      title: 'Dispute Resolved',
+      message: buyerMsg,
+      type: favor === 'buyer' ? NotificationType.success : NotificationType.info,
+      relatedId: id,
+    });
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: trade.seller_id,
+      title: 'Dispute Resolved',
+      message: sellerMsg,
+      type: favor === 'seller' ? NotificationType.success : NotificationType.info,
+      relatedId: id,
+    });
+
+    const [buyerRow, sellerRow] = await Promise.all([
+      qr.query(`SELECT email, name FROM "users" WHERE "id" = $1`, [trade.buyer_id]),
+      qr.query(`SELECT email, name FROM "users" WHERE "id" = $1`, [trade.seller_id]),
+    ]);
+
+    if (buyerRow.length > 0) {
+      await sendEmail({
+        to: buyerRow[0].email,
+        subject: `Dispute Resolved — ${trade.reference}`,
+        template: 'dispute-resolved',
+        context: { name: buyerRow[0].name, reference: trade.reference, outcome: buyerMsg, notes },
+      });
+    }
+    if (sellerRow.length > 0) {
+      await sendEmail({
+        to: sellerRow[0].email,
+        subject: `Dispute Resolved — ${trade.reference}`,
+        template: 'dispute-resolved',
+        context: { name: sellerRow[0].name, reference: trade.reference, outcome: sellerMsg, notes },
+      });
+    }
+
+    const [updated] = (await qr.query(`SELECT * FROM "disputes" WHERE "id" = $1`, [id])) as Dispute[];
+    return { dispute: updated, trade_status: favor === 'buyer' ? TradeStatus.cancelled : TradeStatus.completed };
+  });
+
+  return ok(res, result);
+}
+
 /**
  * @swagger
  * /admin/transactions:
@@ -1073,7 +1251,7 @@ export async function rejectDeposit(req: Request, res: Response) {
       throw new AppError('INVALID_STATUS', 'Cannot reject a completed deposit', 400);
     }
 
-    await qr.query(`UPDATE "deposits" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3 WHERE "id" = $4`, [
+    await qr.query(`UPDATE "deposits" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3, "reviewed_at" = NOW() WHERE "id" = $4`, [
       DepositStatus.rejected,
       reason,
       req.user!.id,
@@ -1615,4 +1793,688 @@ export async function listAdminLogs(req: Request, res: Response) {
   });
 
   return ok(res, { logs });
+}
+
+const metricsQuerySchema = z.object({
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  launch_date: z.string().datetime({ offset: true }).optional(),
+  granularity: z.enum(['day', 'week', 'month']).default('month'),
+});
+
+/**
+ * @swagger
+ * /admin/analytics/metrics:
+ *   get:
+ *     summary: Comprehensive platform metrics for reporting and investor dashboards
+ *     tags: [Admin]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date-time }
+ *         description: Start of window for time-bounded metrics (ISO 8601). Defaults to platform inception.
+ *       - in: query
+ *         name: to
+ *         schema: { type: string, format: date-time }
+ *         description: End of window for time-bounded metrics (ISO 8601). Defaults to now.
+ *       - in: query
+ *         name: launch_date
+ *         schema: { type: string, format: date-time }
+ *         description: Reference date for "users at launch" metric (ISO 8601). Defaults to 2023-10-01.
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function getMetricsAnalytics(req: Request, res: Response) {
+  const query = metricsQuerySchema.parse(req.query);
+  const granularity = query.granularity;
+  const windowTo = query.to ?? new Date().toISOString();
+  const windowFrom = query.from ?? '1970-01-01T00:00:00.000Z';
+  const launchDate = query.launch_date ?? '2023-10-01T00:00:00.000Z';
+
+  // Growth chart default windows are anchored to clean boundaries so bucket
+  // counts are always exactly 7 (day), 4 (week), or 12 (month).
+  function anchoredGrowthFrom(): string {
+    const now = new Date();
+    if (granularity === 'day') {
+      // Start of day 6 days ago → today = 7 buckets
+      const d = new Date(now);
+      d.setDate(d.getDate() - 6);
+      d.setHours(0, 0, 0, 0);
+      return d.toISOString();
+    }
+    if (granularity === 'week') {
+      // Monday of the current week, minus 3 weeks → 4 complete ISO-week buckets
+      const daysToMonday = now.getDay() === 0 ? 6 : now.getDay() - 1;
+      const monday = new Date(now);
+      monday.setDate(monday.getDate() - daysToMonday - 21); // 3 prior weeks
+      monday.setHours(0, 0, 0, 0);
+      return monday.toISOString();
+    }
+    // month: first day of the month 11 months ago → 12 buckets
+    const d = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    return d.toISOString();
+  }
+
+  const growthFrom = query.from ?? anchoredGrowthFrom();
+
+  const metrics = await withTransaction(async (qr) => {
+
+    // ─────────────────────────────────────────────────────────────────
+    // USER METRICS
+    // total_registered/active/suspended/kyc = all-time platform snapshot
+    // new_registrations = users who registered within the window
+    // ─────────────────────────────────────────────────────────────────
+
+    const [userCounts] = await qr.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE deleted_at IS NULL)                                                          AS total_registered,
+        COUNT(*) FILTER (WHERE deleted_at IS NULL AND is_suspended = false AND kyc_status = 'verified')      AS total_active,
+        COUNT(*) FILTER (WHERE deleted_at IS NULL AND is_suspended = true)                                  AS total_suspended,
+        COUNT(*) FILTER (WHERE deleted_at IS NULL AND kyc_status = 'verified')                              AS kyc_verified,
+        COUNT(*) FILTER (WHERE deleted_at IS NULL AND kyc_status = 'pending')                               AS kyc_pending,
+        COUNT(*) FILTER (WHERE deleted_at IS NULL AND kyc_status = 'rejected')                              AS kyc_rejected,
+        COUNT(*) FILTER (WHERE deleted_at IS NULL AND kyc_status = 'unverified')                            AS kyc_unverified,
+        COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at <= $1::timestamptz)                        AS users_at_launch
+      FROM "users"
+      WHERE "role" = 'user'
+    `, [launchDate]) as [Record<string, string>];
+
+    const totalRegistered = parseInt(userCounts.total_registered) || 0;
+    const kycVerified = parseInt(userCounts.kyc_verified) || 0;
+    const kycVerifiedPct = totalRegistered > 0
+      ? parseFloat(((kycVerified / totalRegistered) * 100).toFixed(2))
+      : 0;
+
+    // MAU: distinct users with a completed ledger entry in the last 30 days (rolling, not window-scoped)
+    const [mauRow] = await qr.query(`
+      SELECT COUNT(DISTINCT user_id) AS mau
+      FROM "ledger"
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+        AND status = 'completed'
+    `) as [Record<string, string>];
+
+    // ─────────────────────────────────────────────────────────────────
+    // KYC METRICS — all-time totals (not window-scoped)
+    // ─────────────────────────────────────────────────────────────────
+
+    const [kycTimingRow] = await qr.query(`
+      SELECT
+        ROUND(
+          AVG(EXTRACT(EPOCH FROM (reviewed_at - created_at)) / 3600)::numeric,
+          2
+        ) AS avg_verification_hours,
+        ROUND(
+          PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (reviewed_at - created_at)) / 3600)::numeric,
+          2
+        ) AS median_verification_hours
+      FROM "kyc"
+      WHERE status = 'verified'
+        AND reviewed_at IS NOT NULL
+    `) as [Record<string, string | null>];
+
+    // Drop-off: all-time users who never submitted KYC
+    const [kycDropoffRow] = await qr.query(`
+      SELECT
+        COUNT(u.id)                                          AS total_users,
+        COUNT(u.id) FILTER (WHERE k.user_id IS NULL)         AS never_submitted,
+        ROUND(
+          (COUNT(u.id) FILTER (WHERE k.user_id IS NULL)::numeric
+            / NULLIF(COUNT(u.id), 0)::numeric) * 100,
+          2
+        )                                                    AS dropoff_rate_pct
+      FROM "users" u
+      LEFT JOIN (
+        SELECT DISTINCT user_id FROM "kyc"
+      ) k ON k.user_id = u.id
+      WHERE u.role = 'user'
+        AND u.deleted_at IS NULL
+    `) as [Record<string, string>];
+
+    // First-attempt success rate — all-time
+    const [kycFirstAttemptRow] = await qr.query(`
+      WITH first_submissions AS (
+        SELECT DISTINCT ON (user_id)
+          user_id,
+          status
+        FROM "kyc"
+        ORDER BY user_id, created_at ASC
+      )
+      SELECT
+        COUNT(*) AS total_submitted,
+        COUNT(*) FILTER (WHERE status = 'verified')  AS first_attempt_verified,
+        COUNT(*) FILTER (WHERE status = 'rejected')  AS first_attempt_rejected,
+        COUNT(*) FILTER (WHERE status = 'pending')   AS first_attempt_pending,
+        ROUND(
+          (COUNT(*) FILTER (WHERE status = 'verified')::numeric
+            / NULLIF(COUNT(*), 0)::numeric) * 100,
+          2
+        ) AS first_attempt_success_rate_pct
+      FROM first_submissions
+    `) as [Record<string, string>];
+
+    // Total KYC submissions — all-time
+    const [kycTotalsRow] = await qr.query(`
+      SELECT
+        COUNT(*)                                            AS total_submissions,
+        COUNT(*) FILTER (WHERE status = 'verified')        AS verified,
+        COUNT(*) FILTER (WHERE status = 'rejected')        AS rejected,
+        COUNT(*) FILTER (WHERE status = 'pending')         AS pending
+      FROM "kyc"
+    `) as [Record<string, string>];
+
+    // ─────────────────────────────────────────────────────────────────
+    // TRADE / VOLUME METRICS — all-time totals (not window-scoped)
+    // ─────────────────────────────────────────────────────────────────
+
+    const tradeVolumeRows = await qr.query(`
+      SELECT
+        currency,
+        COUNT(*)                                                                  AS total_trades,
+        COUNT(*) FILTER (WHERE status = 'completed')                             AS completed_trades,
+        COUNT(*) FILTER (WHERE status = 'cancelled')                             AS cancelled_trades,
+        COUNT(*) FILTER (WHERE status = 'disputed')                              AS disputed_trades,
+        SUM(total_ngn) FILTER (WHERE status = 'completed')                       AS lifetime_ngn_volume,
+        SUM(amount)    FILTER (WHERE status = 'completed')                       AS lifetime_foreign_volume,
+        AVG(total_ngn) FILTER (WHERE status = 'completed')                       AS avg_trade_size_ngn,
+        AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 3600)
+          FILTER (WHERE status = 'completed' AND completed_at IS NOT NULL)       AS avg_settlement_hours
+      FROM "trades"
+      GROUP BY currency
+    `) as Array<Record<string, string | null>>;
+
+    const [tradeTotalsRow] = await qr.query(`
+      SELECT
+        COUNT(*)                                                            AS total_initiated,
+        COUNT(*) FILTER (WHERE status = 'completed')                       AS total_completed,
+        COUNT(*) FILTER (WHERE status = 'cancelled')                       AS total_cancelled,
+        COUNT(*) FILTER (WHERE status = 'disputed')                        AS total_disputed,
+        COALESCE(SUM(total_ngn) FILTER (WHERE status = 'completed'), 0)    AS lifetime_ngn_volume,
+        ROUND(AVG(total_ngn) FILTER (WHERE status = 'completed')::numeric, 2) AS avg_trade_size_ngn,
+        ROUND(
+          (COUNT(*) FILTER (WHERE status = 'completed')::numeric
+            / NULLIF(COUNT(*), 0)::numeric) * 100,
+          2
+        )                                                                  AS success_rate_pct,
+        ROUND(
+          (COUNT(*) FILTER (WHERE status = 'cancelled')::numeric
+            / NULLIF(COUNT(*), 0)::numeric) * 100,
+          2
+        )                                                                  AS cancellation_rate_pct,
+        ROUND(
+          AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 3600)
+            FILTER (WHERE status = 'completed' AND completed_at IS NOT NULL)::numeric,
+          2
+        )                                                                  AS avg_settlement_hours
+      FROM "trades"
+    `) as [Record<string, string | null>];
+
+    // ─────────────────────────────────────────────────────────────────
+    // P2P / SABITS METRICS — all-time totals (not window-scoped)
+    // ─────────────────────────────────────────────────────────────────
+
+    const [p2pRow] = await qr.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'active')     AS active_listings,
+        COUNT(*) FILTER (WHERE status = 'completed')  AS completed_listings,
+        COUNT(*) FILTER (WHERE status = 'cancelled')  AS cancelled_listings,
+        COUNT(DISTINCT user_id)                       AS total_sellers
+      FROM "sabits"
+    `) as [Record<string, string>];
+
+    const [p2pBuyersRow] = await qr.query(`
+      SELECT COUNT(DISTINCT buyer_id) AS total_buyers
+      FROM "trades"
+    `) as [Record<string, string>];
+
+    const [repeatRow] = await qr.query(`
+      WITH trade_counts AS (
+        SELECT buyer_id AS user_id, COUNT(*) AS cnt
+        FROM "trades"
+        WHERE status = 'completed'
+        GROUP BY buyer_id
+        UNION ALL
+        SELECT seller_id AS user_id, COUNT(*) AS cnt
+        FROM "trades"
+        WHERE status = 'completed'
+        GROUP BY seller_id
+      ),
+      user_trade_totals AS (
+        SELECT user_id, SUM(cnt) AS total_trades
+        FROM trade_counts
+        GROUP BY user_id
+      )
+      SELECT
+        COUNT(*)                                     AS users_who_traded,
+        COUNT(*) FILTER (WHERE total_trades > 1)     AS repeat_traders,
+        ROUND(
+          (COUNT(*) FILTER (WHERE total_trades > 1)::numeric
+            / NULLIF(COUNT(*), 0)::numeric) * 100,
+          2
+        )                                            AS repeat_rate_pct
+      FROM user_trade_totals
+    `) as [Record<string, string>];
+
+    const [disputeRow] = await qr.query(`
+      SELECT
+        COUNT(*)                                         AS total_disputes,
+        COUNT(*) FILTER (WHERE status = 'open')          AS open_disputes,
+        COUNT(*) FILTER (WHERE status = 'resolved')      AS resolved_disputes
+      FROM "disputes"
+    `) as [Record<string, string>];
+
+    const totalCompletedTrades = parseInt(tradeTotalsRow.total_completed ?? '0') || 0;
+    const totalDisputes = parseInt(disputeRow.total_disputes) || 0;
+    const disputeRatePct = totalCompletedTrades > 0
+      ? parseFloat(((totalDisputes / totalCompletedTrades) * 100).toFixed(4))
+      : 0;
+
+    // ─────────────────────────────────────────────────────────────────
+    // ESCROW METRICS — all-time totals; live_tvl is current wallet snapshot
+    // ─────────────────────────────────────────────────────────────────
+
+    const [escrowRow] = await qr.query(`
+      SELECT
+        -- All-time NGN that passed through escrow lock (completed + escrowed + disputed)
+        COALESCE(
+          SUM(total_ngn) FILTER (WHERE status IN ('completed', 'escrowed', 'disputed')),
+          0
+        ) AS lifetime_volume_ngn,
+        -- NGN value of trades currently locked in escrow right now
+        COALESCE(
+          SUM(total_ngn) FILTER (WHERE status = 'escrowed'),
+          0
+        ) AS current_volume_ngn,
+        ROUND(
+          (COUNT(*) FILTER (WHERE status = 'completed')::numeric
+            / NULLIF(
+                COUNT(*) FILTER (WHERE status IN ('completed','cancelled')),
+                0
+              )::numeric) * 100,
+          2
+        ) AS completion_rate_pct,
+        ROUND(
+          (COUNT(*) FILTER (WHERE status = 'cancelled')::numeric
+            / NULLIF(COUNT(*), 0)::numeric) * 100,
+          2
+        ) AS timeout_rate_pct
+      FROM "trades"
+    `) as [Record<string, string | null>];
+
+    // currently_escrowed is a live snapshot — never window-scoped
+    const [escrowLiveRow] = await qr.query(`
+      SELECT COUNT(*) AS currently_escrowed FROM "trades" WHERE status = 'escrowed'
+    `) as [Record<string, string>];
+
+    // Live TVL is always a current wallet snapshot — not window-scoped
+    const escrowTvlRows = await qr.query(`
+      SELECT currency, COALESCE(SUM(escrow_balance), 0) AS locked_value
+      FROM "wallets"
+      WHERE escrow_balance > 0
+      GROUP BY currency
+    `) as Array<Record<string, string>>;
+
+    // ─────────────────────────────────────────────────────────────────
+    // DEPOSIT METRICS — all-time totals (not window-scoped)
+    // ─────────────────────────────────────────────────────────────────
+
+    const depositVolumeRows = await qr.query(`
+      SELECT
+        currency,
+        COUNT(*)                                              AS total_deposits,
+        COUNT(*) FILTER (WHERE status = 'completed')         AS completed_deposits,
+        COUNT(*) FILTER (WHERE status = 'rejected')          AS rejected_deposits,
+        COUNT(*) FILTER (WHERE status = 'pending_review')    AS pending_deposits,
+        COUNT(*) FILTER (WHERE status = 'initiated')         AS initiated_deposits,
+        COUNT(*) FILTER (WHERE status = 'failed')            AS failed_deposits,
+        COUNT(*) FILTER (WHERE status = 'expired')           AS expired_deposits,
+        COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) AS total_volume
+      FROM "deposits"
+      GROUP BY currency
+    `) as Array<Record<string, string>>;
+
+    // ─────────────────────────────────────────────────────────────────
+    // GROWTH METRICS — monthly breakdown within the window
+    // ─────────────────────────────────────────────────────────────────
+
+    // All three granularities include a baseline CTE that counts users registered
+    // BEFORE the window start, so cumulative_users starts from that offset rather
+    // than 0. This ensures the chart adds up to total_registered correctly.
+    const userGrowthSql = granularity === 'day'
+      ? `WITH baseline AS (
+           SELECT COUNT(*) AS prior_users FROM "users"
+           WHERE role = 'user' AND deleted_at IS NULL
+             AND created_at < DATE_TRUNC('day', $1::timestamptz)
+         )
+         SELECT
+           TO_CHAR(d.day, 'Dy') AS label,
+           COALESCE(u.new_users, 0) AS new_users,
+           b.prior_users + SUM(COALESCE(u.new_users, 0)) OVER (ORDER BY d.day) AS cumulative_users
+         FROM generate_series(
+           DATE_TRUNC('day', $1::timestamptz),
+           DATE_TRUNC('day', $2::timestamptz),
+           INTERVAL '1 day'
+         ) AS d(day)
+         CROSS JOIN baseline b
+         LEFT JOIN (
+           SELECT DATE_TRUNC('day', created_at) AS bucket, COUNT(*) AS new_users
+           FROM "users"
+           WHERE role = 'user' AND deleted_at IS NULL
+             AND created_at BETWEEN $1::timestamptz AND $2::timestamptz
+           GROUP BY bucket
+         ) u ON u.bucket = d.day
+         ORDER BY d.day ASC`
+      : granularity === 'week'
+      ? `WITH baseline AS (
+           SELECT COUNT(*) AS prior_users FROM "users"
+           WHERE role = 'user' AND deleted_at IS NULL
+             AND created_at < DATE_TRUNC('week', $1::timestamptz)
+         ),
+         weeks AS (
+           SELECT generate_series(
+             DATE_TRUNC('week', $1::timestamptz),
+             DATE_TRUNC('week', $2::timestamptz),
+             INTERVAL '1 week'
+           ) AS bucket
+         )
+         SELECT
+           'Week ' || ROW_NUMBER() OVER (ORDER BY w.bucket) AS label,
+           COALESCE(u.new_users, 0) AS new_users,
+           b.prior_users + SUM(COALESCE(u.new_users, 0)) OVER (ORDER BY w.bucket) AS cumulative_users
+         FROM weeks w
+         CROSS JOIN baseline b
+         LEFT JOIN (
+           SELECT DATE_TRUNC('week', created_at) AS bucket, COUNT(*) AS new_users
+           FROM "users"
+           WHERE role = 'user' AND deleted_at IS NULL
+             AND created_at BETWEEN $1::timestamptz AND $2::timestamptz
+           GROUP BY bucket
+         ) u ON u.bucket = w.bucket
+         ORDER BY w.bucket ASC`
+      : `WITH baseline AS (
+           SELECT COUNT(*) AS prior_users FROM "users"
+           WHERE role = 'user' AND deleted_at IS NULL
+             AND created_at < DATE_TRUNC('month', $1::timestamptz)
+         ),
+         months AS (
+           SELECT generate_series(
+             DATE_TRUNC('month', $1::timestamptz),
+             DATE_TRUNC('month', $2::timestamptz),
+             INTERVAL '1 month'
+           ) AS bucket
+         )
+         SELECT
+           TO_CHAR(m.bucket, 'Mon YY') AS label,
+           COALESCE(u.new_users, 0) AS new_users,
+           b.prior_users + SUM(COALESCE(u.new_users, 0)) OVER (ORDER BY m.bucket) AS cumulative_users
+         FROM months m
+         CROSS JOIN baseline b
+         LEFT JOIN (
+           SELECT DATE_TRUNC('month', created_at) AS bucket, COUNT(*) AS new_users
+           FROM "users"
+           WHERE role = 'user' AND deleted_at IS NULL
+             AND created_at BETWEEN $1::timestamptz AND $2::timestamptz
+           GROUP BY bucket
+         ) u ON u.bucket = m.bucket
+         ORDER BY m.bucket ASC`;
+
+    const userGrowthMonthly = await qr.query(userGrowthSql, [growthFrom, windowTo]) as Array<Record<string, string>>;
+
+    const tradeVolumeSql = granularity === 'day'
+      ? `WITH baseline AS (
+           SELECT COALESCE(SUM(total_ngn), 0) AS prior_volume
+           FROM "trades"
+           WHERE status = 'completed'
+             AND created_at < DATE_TRUNC('day', $1::timestamptz)
+         ),
+         days AS (
+           SELECT generate_series(
+             DATE_TRUNC('day', $1::timestamptz),
+             DATE_TRUNC('day', $2::timestamptz),
+             INTERVAL '1 day'
+           ) AS bucket
+         )
+         SELECT
+           TO_CHAR(d.bucket, 'Dy') AS label,
+           COALESCE(t.completed_trades, 0) AS completed_trades,
+           COALESCE(t.ngn_volume, '0') AS ngn_volume,
+           (b.prior_volume + SUM(COALESCE(t.ngn_volume::numeric, 0)) OVER (ORDER BY d.bucket))::text AS cumulative_ngn_volume
+         FROM days d
+         CROSS JOIN baseline b
+         LEFT JOIN (
+           SELECT
+             DATE_TRUNC('day', created_at) AS bucket,
+             COUNT(*) FILTER (WHERE status = 'completed') AS completed_trades,
+             COALESCE(SUM(total_ngn) FILTER (WHERE status = 'completed'), 0) AS ngn_volume
+           FROM "trades"
+           WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
+           GROUP BY bucket
+         ) t ON t.bucket = d.bucket
+         ORDER BY d.bucket ASC`
+      : granularity === 'week'
+      ? `WITH baseline AS (
+           SELECT COALESCE(SUM(total_ngn), 0) AS prior_volume
+           FROM "trades"
+           WHERE status = 'completed'
+             AND created_at < DATE_TRUNC('week', $1::timestamptz)
+         ),
+         weeks AS (
+           SELECT generate_series(
+             DATE_TRUNC('week', $1::timestamptz),
+             DATE_TRUNC('week', $2::timestamptz),
+             INTERVAL '1 week'
+           ) AS bucket
+         )
+         SELECT
+           'Week ' || ROW_NUMBER() OVER (ORDER BY w.bucket) AS label,
+           COALESCE(t.completed_trades, 0) AS completed_trades,
+           COALESCE(t.ngn_volume, '0') AS ngn_volume,
+           (b.prior_volume + SUM(COALESCE(t.ngn_volume::numeric, 0)) OVER (ORDER BY w.bucket))::text AS cumulative_ngn_volume
+         FROM weeks w
+         CROSS JOIN baseline b
+         LEFT JOIN (
+           SELECT
+             DATE_TRUNC('week', created_at) AS bucket,
+             COUNT(*) FILTER (WHERE status = 'completed') AS completed_trades,
+             COALESCE(SUM(total_ngn) FILTER (WHERE status = 'completed'), 0) AS ngn_volume
+           FROM "trades"
+           WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
+           GROUP BY bucket
+         ) t ON t.bucket = w.bucket
+         ORDER BY w.bucket ASC`
+      : `WITH baseline AS (
+           SELECT COALESCE(SUM(total_ngn), 0) AS prior_volume
+           FROM "trades"
+           WHERE status = 'completed'
+             AND created_at < DATE_TRUNC('month', $1::timestamptz)
+         ),
+         months AS (
+           SELECT generate_series(
+             DATE_TRUNC('month', $1::timestamptz),
+             DATE_TRUNC('month', $2::timestamptz),
+             INTERVAL '1 month'
+           ) AS bucket
+         )
+         SELECT
+           TO_CHAR(m.bucket, 'Mon YY') AS label,
+           COALESCE(t.completed_trades, 0) AS completed_trades,
+           COALESCE(t.ngn_volume, '0') AS ngn_volume,
+           (b.prior_volume + SUM(COALESCE(t.ngn_volume::numeric, 0)) OVER (ORDER BY m.bucket))::text AS cumulative_ngn_volume
+         FROM months m
+         CROSS JOIN baseline b
+         LEFT JOIN (
+           SELECT
+             DATE_TRUNC('month', created_at) AS bucket,
+             COUNT(*) FILTER (WHERE status = 'completed') AS completed_trades,
+             COALESCE(SUM(total_ngn) FILTER (WHERE status = 'completed'), 0) AS ngn_volume
+           FROM "trades"
+           WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
+           GROUP BY bucket
+         ) t ON t.bucket = m.bucket
+         ORDER BY m.bucket ASC`;
+
+    const tradeVolumeMonthly = await qr.query(tradeVolumeSql, [growthFrom, windowTo]) as Array<Record<string, string>>;
+
+    // ─────────────────────────────────────────────────────────────────
+    // PLATFORM / STATIC CONSTANTS
+    // ─────────────────────────────────────────────────────────────────
+
+    const platformConstants = {
+      pin_confirmation_window_minutes: 30,
+      bid_expiry_hours: 24,
+      background_jobs_count: 4,
+      supported_currencies: ['NGN', 'GBP', 'USD', 'CAD'],
+      kyc_process: 'manual_admin_review',
+      deposit_ngn_provider: 'flutterwave',
+      deposit_foreign_process: 'manual_proof_upload',
+    };
+
+    return {
+      generated_at: new Date().toISOString(),
+      window: { from: windowFrom, to: windowTo },
+      granularity,
+      launch_date: launchDate,
+
+      users: {
+        // All-time platform snapshot
+        total_registered: totalRegistered,
+        total_active: parseInt(userCounts.total_active) || 0,
+        total_suspended: parseInt(userCounts.total_suspended) || 0,
+        users_at_launch: parseInt(userCounts.users_at_launch) || 0,
+        // Rolling 30-day
+        monthly_active_users: parseInt(mauRow.mau) || 0,
+        // KYC status breakdown is current state of all users (snapshot)
+        kyc: {
+          verified: kycVerified,
+          verified_pct: kycVerifiedPct,
+          pending: parseInt(userCounts.kyc_pending) || 0,
+          rejected: parseInt(userCounts.kyc_rejected) || 0,
+          unverified: parseInt(userCounts.kyc_unverified) || 0,
+        },
+      },
+
+      kyc: {
+        total_submissions: parseInt(kycTotalsRow.total_submissions) || 0,
+        verified_submissions: parseInt(kycTotalsRow.verified) || 0,
+        rejected_submissions: parseInt(kycTotalsRow.rejected) || 0,
+        pending_submissions: parseInt(kycTotalsRow.pending) || 0,
+        avg_verification_hours: kycTimingRow.avg_verification_hours
+          ? parseFloat(kycTimingRow.avg_verification_hours)
+          : null,
+        median_verification_hours: kycTimingRow.median_verification_hours
+          ? parseFloat(kycTimingRow.median_verification_hours)
+          : null,
+        avg_verification_hours_note: kycTimingRow.avg_verification_hours === null
+          ? 'No verified KYC records with reviewed_at timestamp yet.'
+          : null,
+        dropoff: {
+          total_users: parseInt(kycDropoffRow.total_users) || 0,
+          never_submitted: parseInt(kycDropoffRow.never_submitted) || 0,
+          dropoff_rate_pct: parseFloat(kycDropoffRow.dropoff_rate_pct) || 0,
+        },
+        first_attempt: {
+          total_submitted: parseInt(kycFirstAttemptRow.total_submitted) || 0,
+          first_attempt_verified: parseInt(kycFirstAttemptRow.first_attempt_verified) || 0,
+          first_attempt_rejected: parseInt(kycFirstAttemptRow.first_attempt_rejected) || 0,
+          first_attempt_pending: parseInt(kycFirstAttemptRow.first_attempt_pending) || 0,
+          success_rate_pct: parseFloat(kycFirstAttemptRow.first_attempt_success_rate_pct) || 0,
+        },
+      },
+
+      trades: {
+        total_initiated: parseInt(tradeTotalsRow.total_initiated ?? '0') || 0,
+        total_completed: totalCompletedTrades,
+        total_cancelled: parseInt(tradeTotalsRow.total_cancelled ?? '0') || 0,
+        total_disputed: parseInt(tradeTotalsRow.total_disputed ?? '0') || 0,
+        success_rate_pct: parseFloat(tradeTotalsRow.success_rate_pct ?? '0') || 0,
+        cancellation_rate_pct: parseFloat(tradeTotalsRow.cancellation_rate_pct ?? '0') || 0,
+        lifetime_ngn_volume: tradeTotalsRow.lifetime_ngn_volume ?? '0',
+        avg_trade_size_ngn: tradeTotalsRow.avg_trade_size_ngn ?? '0',
+        avg_settlement_hours: tradeTotalsRow.avg_settlement_hours
+          ? parseFloat(tradeTotalsRow.avg_settlement_hours)
+          : null,
+        by_currency: tradeVolumeRows.map((r) => ({
+          currency: r.currency,
+          total_trades: parseInt(r.total_trades ?? '0') || 0,
+          completed_trades: parseInt(r.completed_trades ?? '0') || 0,
+          cancelled_trades: parseInt(r.cancelled_trades ?? '0') || 0,
+          disputed_trades: parseInt(r.disputed_trades ?? '0') || 0,
+          lifetime_ngn_volume: r.lifetime_ngn_volume ?? '0',
+          lifetime_foreign_volume: r.lifetime_foreign_volume ?? '0',
+          avg_trade_size_ngn: r.avg_trade_size_ngn
+            ? parseFloat(r.avg_trade_size_ngn).toFixed(2)
+            : '0',
+          avg_settlement_hours: r.avg_settlement_hours
+            ? parseFloat(r.avg_settlement_hours).toFixed(2)
+            : null,
+        })),
+      },
+
+      p2p: {
+        active_listings: parseInt(p2pRow.active_listings) || 0,
+        completed_listings: parseInt(p2pRow.completed_listings) || 0,
+        cancelled_listings: parseInt(p2pRow.cancelled_listings) || 0,
+        total_sellers: parseInt(p2pRow.total_sellers) || 0,
+        total_buyers: parseInt(p2pBuyersRow.total_buyers) || 0,
+        repeat_traders: parseInt(repeatRow.repeat_traders) || 0,
+        users_who_traded: parseInt(repeatRow.users_who_traded) || 0,
+        repeat_rate_pct: parseFloat(repeatRow.repeat_rate_pct) || 0,
+        dispute_rate_pct: disputeRatePct,
+        disputes: {
+          total: totalDisputes,
+          open: parseInt(disputeRow.open_disputes) || 0,
+          resolved: parseInt(disputeRow.resolved_disputes) || 0,
+        },
+      },
+
+      escrow: {
+        lifetime_volume_ngn: escrowRow.lifetime_volume_ngn ?? '0',
+        current_volume_ngn: escrowRow.current_volume_ngn ?? '0',
+        completion_rate_pct: parseFloat(escrowRow.completion_rate_pct ?? '0') || 0,
+        timeout_rate_pct: parseFloat(escrowRow.timeout_rate_pct ?? '0') || 0,
+        currently_escrowed_trades: parseInt(escrowLiveRow.currently_escrowed) || 0,
+        live_tvl_by_currency: escrowTvlRows.map((r) => ({
+          currency: r.currency,
+          locked_value: r.locked_value,
+        })),
+      },
+
+      deposits: {
+        by_currency: depositVolumeRows.map((r) => ({
+          currency: r.currency,
+          total_deposits: parseInt(r.total_deposits) || 0,
+          completed_deposits: parseInt(r.completed_deposits) || 0,
+          rejected_deposits: parseInt(r.rejected_deposits) || 0,
+          pending_deposits: parseInt(r.pending_deposits) || 0,
+          initiated_deposits: parseInt(r.initiated_deposits) || 0,
+          failed_deposits: parseInt(r.failed_deposits) || 0,
+          expired_deposits: parseInt(r.expired_deposits) || 0,
+          // total_volume = SUM of completed deposits only
+          total_volume: r.total_volume,
+        })),
+      },
+
+      growth: {
+        user_growth_monthly: userGrowthMonthly.map((r) => ({
+          label: r.label,
+          new_users: parseInt(r.new_users) || 0,
+          cumulative_users: parseInt(r.cumulative_users) || 0,
+        })),
+        trade_volume_monthly: tradeVolumeMonthly.map((r) => ({
+          label: r.label,
+          completed_trades: parseInt(r.completed_trades) || 0,
+          ngn_volume: r.ngn_volume,
+          cumulative_ngn_volume: r.cumulative_ngn_volume,
+        })),
+      },
+
+      platform: platformConstants,
+    };
+  });
+
+  return ok(res, metrics);
 }

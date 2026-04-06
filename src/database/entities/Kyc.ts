@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
 import { KycStatus } from '../../utils/enums';
 import { User } from './User';
@@ -31,6 +31,9 @@ export class Kyc {
 
   @Column({ type: 'uuid', nullable: true })
   reviewed_by!: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  reviewed_at!: Date | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;

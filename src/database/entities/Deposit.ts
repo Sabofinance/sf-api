@@ -41,6 +41,9 @@ export class Deposit {
   @Column({ type: 'uuid', nullable: true })
   reviewed_by!: string | null;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  reviewed_at!: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 }

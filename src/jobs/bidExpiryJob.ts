@@ -1,5 +1,3 @@
-import { Queue, Worker, Job } from 'bullmq';
-import { env } from '../config/env';
 import { Bid } from '../database/entities/Bid';
 import { withTransaction } from '../database/transaction';
 import { sendEmail } from '../services/emailService';
@@ -7,45 +5,12 @@ import { NotificationService } from '../services/notificationService';
 import { WalletService } from '../services/walletService';
 import { BidStatus, Currency, LedgerType, NotificationType } from '../utils/enums';
 
-const redisHost = env.REDIS_URL || env.REDIS_HOST || 'localhost';
-
-// Parse Redis URL if provided to configure BullMQ correctly
-let connection: any = {
-  host: redisHost,
-  port: env.REDIS_PORT || 6379,
-};
-
-if (env.REDIS_URL) {
-  try {
-    const parsed = new URL(env.REDIS_URL);
-    connection = {
-      host: parsed.hostname,
-      port: parseInt(parsed.port || '6379', 10),
-      username: parsed.username || undefined,
-      password: parsed.password || undefined,
-      tls: parsed.protocol === 'rediss:' ? {
-        rejectUnauthorized: false
-      } : undefined,
-    };
-  } catch (e) {
-    console.error('Failed to parse REDIS_URL', e);
-  }
-}
-
-export const bidExpiryQueue = new Queue('bid-expiry', { connection });
-
-export const bidExpiryWorker = new Worker('bid-expiry', async (job: Job) => {
-  if (job.name === 'check-expired-bids') {
-    await checkExpiredBids();
-  }
-}, { connection });
-
 async function checkExpiredBids() {
   await withTransaction(async (qr) => {
     const expiredBids = (await qr.query(
-      `SELECT * FROM "bids" 
-       WHERE "status" = $1 
-       AND "expires_at" < NOW() 
+      `SELECT * FROM "bids"
+       WHERE "status" = $1
+       AND "expires_at" < NOW()
        FOR UPDATE SKIP LOCKED`,
       [BidStatus.pending],
     )) as Bid[];
@@ -96,9 +61,7 @@ async function checkExpiredBids() {
   });
 }
 
-// Add the repeatable job
-bidExpiryQueue.add('check-expired-bids', {}, {
-  repeat: {
-    pattern: '*/5 * * * *', // Every 5 minutes
-  },
-});
+// Run every 5 minutes
+setInterval(() => {
+  checkExpiredBids().catch((err) => console.error('[bidExpiryJob] error:', err));
+}, 5 * 60 * 1000);

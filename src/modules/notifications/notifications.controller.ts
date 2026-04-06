@@ -80,12 +80,12 @@ export async function markRead(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
 
   await withTransaction(async (qr) => {
-    const result = await qr.query(
-      `UPDATE "notifications" SET "status" = $1 WHERE "id" = $2 AND ("user_id" = $3 OR $4 = 'admin')`,
-      [NotificationStatus.read, id, req.user!.id, req.user!.role]
-    );
+    const rows = (await qr.query(
+      `UPDATE "notifications" SET "status" = $1 WHERE "id" = $2 AND ("user_id" = $3 OR $4 = 'admin') RETURNING id`,
+      [NotificationStatus.read, id, req.user!.id, req.user!.role],
+    )) as Array<{ id: string }>;
 
-    if (result[1] === 0) {
+    if (rows.length === 0) {
       throw new NotFoundError('No notification with that ID exists on your account.', 'NOTIFICATION_NOT_FOUND');
     }
   });

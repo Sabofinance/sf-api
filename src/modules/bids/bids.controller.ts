@@ -214,7 +214,7 @@ export async function getMyBids(req: Request, res: Response) {
   const offset = (page - 1) * limit;
 
   let query = `SELECT * FROM "bids" WHERE "buyer_id" = $1`;
-  const params: any[] = [req.user!.id];
+  const params: unknown[] = [req.user!.id];
 
   if (status) {
     query += ` AND "status" = $2`;
@@ -248,7 +248,7 @@ export async function getReceivedBids(req: Request, res: Response) {
   const offset = (page - 1) * limit;
 
   let query = `SELECT * FROM "bids" WHERE "seller_id" = $1`;
-  const params: any[] = [req.user!.id];
+  const params: unknown[] = [req.user!.id];
 
   if (status) {
     query += ` AND "status" = $2`;
@@ -330,6 +330,13 @@ export async function acceptBid(req: Request, res: Response) {
     const sabitRows = await qr.query(`SELECT * FROM "sabits" WHERE "id" = $1 FOR UPDATE`, [bid.sabit_id]) as Sabit[];
     const sabit = sabitRows[0];
 
+    if (!sabit) {
+      throw new NotFoundError('The listing associated with this bid no longer exists.', 'SABIT_NOT_FOUND');
+    }
+    if (new Decimal(bid.amount).gt(new Decimal(sabit.available_amount))) {
+      throw new AppError('INSUFFICIENT_LISTING_AMOUNT', 'Not enough available amount on this listing to fulfill this bid.', 400);
+    }
+
     const walletService = new WalletService();
     await walletService.lock({
       queryRunner: qr,
@@ -344,7 +351,8 @@ export async function acceptBid(req: Request, res: Response) {
     await qr.query(`UPDATE "bids" SET "status" = 'accepted', "seller_responded_at" = NOW() WHERE "id" = $1`, [bid.id]);
 
     const newAvailableAmount = new Decimal(sabit.available_amount).minus(new Decimal(bid.amount));
-    await qr.query(`UPDATE "sabits" SET "available_amount" = $1 WHERE "id" = $2`, [newAvailableAmount.toFixed(2), sabit.id]);
+    const newSabitStatus = newAvailableAmount.lte(0) ? SabitStatus.completed : sabit.status;
+    await qr.query(`UPDATE "sabits" SET "available_amount" = $1, "status" = $2 WHERE "id" = $3`, [newAvailableAmount.toFixed(2), newSabitStatus, sabit.id]);
 
     const tradeReference = await nextReference(qr, 'TXN');
 
@@ -495,6 +503,7 @@ export async function rejectBid(req: Request, res: Response) {
       throw new AppError('BID_EXPIRED', 'This bid has expired', 400);
     }
 
+    await requirePinSet(bid.seller_id, qr);
     const pinValid = await verifyPin(bid.seller_id, pin, qr);
     if (!pinValid) {
       throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);

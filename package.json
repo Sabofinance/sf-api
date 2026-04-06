@@ -13,6 +13,7 @@
         "migration:run:test": "npm run typeorm:test -- migration:run",
         "migration:run:prod": "node ./node_modules/typeorm/cli.js -d dist/database/data-source.js migration:run",
         "migration:revert": "npm run typeorm -- migration:revert",
+        "seed": "node -r ts-node/register -r dotenv/config src/database/seed.ts",
         "test": "NODE_ENV=test node -r ts-node/register -r dotenv/config ./node_modules/jest/bin/jest.js --runInBand"
     },
     "dependencies": {
@@ -24,7 +25,6 @@
         "@types/swagger-jsdoc": "^6.0.4",
         "@types/swagger-ui-express": "^4.1.8",
         "bcrypt": "^6.0.0",
-        "bullmq": "^5.71.0",
         "cloudinary": "^2.9.0",
         "cors": "^2.8.6",
         "decimal.js": "^10.6.0",

@@ -1,7 +1,6 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
-import { AppDataSource } from '../../database/data-source';
 import { Trade } from '../../database/entities/Trade';
 import { TradeRating } from '../../database/entities/TradeRating';
 import { withTransaction } from '../../database/transaction';
@@ -102,35 +101,49 @@ const idSchema = z.object({ id: z.string().uuid() });
  *       200:
  *         description: OK
  */
+const reputationQuerySchema = z.object({
+  page: z.string().optional().default('1'),
+  limit: z.string().optional().default('20'),
+});
+
 export async function getUserReputation(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
+  const { page, limit } = reputationQuerySchema.parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
 
-  // Get aggregate stats
-  const statsRows = (await AppDataSource.query(`
-    SELECT 
-      COUNT(*) as total_reviews,
-      ROUND(AVG(score), 2) as average_score
-    FROM "trade_ratings"
-    WHERE "rated_user_id" = $1
-  `, [id])) as Array<{ total_reviews: string; average_score: string | null }>;
+  const result = await withTransaction(async (qr) => {
+    const [stats] = (await qr.query(
+      `SELECT COUNT(*) as total_reviews, ROUND(AVG(score), 2) as average_score
+       FROM "trade_ratings" WHERE "rated_user_id" = $1`,
+      [id],
+    )) as Array<{ total_reviews: string; average_score: string | null }>;
 
-  const stats = statsRows[0];
+    const [{ total_with_comments }] = (await qr.query(
+      `SELECT COUNT(*) as total_with_comments FROM "trade_ratings" WHERE "rated_user_id" = $1 AND comment IS NOT NULL`,
+      [id],
+    )) as [{ total_with_comments: string }];
 
-  // Get recent reviews
-  const recentReviews = await AppDataSource.query(`
-    SELECT r.id, r.score, r.comment, r.created_at, u.name as rater_name
-    FROM "trade_ratings" r
-    JOIN "users" u ON r.rater_id = u.id
-    WHERE r."rated_user_id" = $1 AND r.comment IS NOT NULL
-    ORDER BY r.created_at DESC
-    LIMIT 10
-  `, [id]);
+    const recentReviews = (await qr.query(
+      `SELECT r.id, r.score, r.comment, r.created_at, u.name as rater_name
+       FROM "trade_ratings" r JOIN "users" u ON r.rater_id = u.id
+       WHERE r."rated_user_id" = $1 AND r.comment IS NOT NULL
+       ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`,
+      [id, limitNum, offset],
+    )) as Array<Record<string, unknown>>;
+
+    return { stats, total_with_comments: parseInt(total_with_comments), recentReviews };
+  });
 
   return ok(res, {
     reputation: {
-      average_score: stats.average_score ? parseFloat(stats.average_score) : 0,
-      total_reviews: parseInt(stats.total_reviews, 10),
+      average_score: result.stats.average_score ? parseFloat(result.stats.average_score) : 0,
+      total_reviews: parseInt(result.stats.total_reviews, 10),
     },
-    recent_reviews: recentReviews,
+    recent_reviews: result.recentReviews,
+    total: result.total_with_comments,
+    page: pageNum,
+    limit: limitNum,
   });
 }

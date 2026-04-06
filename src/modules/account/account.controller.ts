@@ -7,6 +7,7 @@ import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
 import { verifyPin } from '../../services/pinService';
 import { ok } from '../../utils/apiResponse';
+import { UserRole } from '../../utils/enums';
 import { AppError } from '../../utils/errors';
 
 const updateUsernameSchema = z.object({
@@ -144,41 +145,6 @@ export async function setTransactionPin(req: Request, res: Response) {
   return ok(res, { message: 'Transaction PIN set successfully' });
 }
 
-const verifyPinSchema = z.object({
-  pin: z.string().length(6).regex(/^\d{6}$/, 'PIN must be exactly 6 digits'),
-});
-
-/**
- * @swagger
- * /account/transaction-pin/verify:
- *   post:
- *     summary: Verify transaction PIN
- *     tags: [Account]
- *     security: [{ BearerAuth: [] }]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [pin]
- *             properties:
- *               pin: { type: string, example: "123456" }
- *     responses:
- *       200:
- *         description: PIN verification result
- */
-export async function verifyTransactionPin(req: Request, res: Response) {
-  const { pin } = verifyPinSchema.parse(req.body);
-  const userId = req.user!.id;
-
-  const isValid = await withTransaction(async (qr) => {
-    return verifyPin(userId, pin, qr);
-  });
-
-  return ok(res, { isValid });
-}
-
 /**
  * @swagger
  * /account/profile/picture:
@@ -276,11 +242,15 @@ export async function initiateAccountDeletion(req: Request, res: Response) {
   const input = accountDeletionInitiateSchema.parse(req.body);
   const userId = req.user!.id;
 
+  if (req.user!.role === UserRole.admin || req.user!.role === UserRole.super_admin) {
+    throw new AppError('ADMIN_CANNOT_DELETE', 'Admin accounts cannot be self-deleted. Contact a super admin to remove this account.', 403);
+  }
+
   const result = await withTransaction(async (qr) => {
     const rows = (await qr.query(
-      `SELECT "id","name","email","password_hash" 
-       FROM "users" 
-       WHERE "id" = $1 AND "deleted_at" IS NULL 
+      `SELECT "id","name","email","password_hash"
+       FROM "users"
+       WHERE "id" = $1 AND "deleted_at" IS NULL
        LIMIT 1
        FOR UPDATE`,
       [userId],

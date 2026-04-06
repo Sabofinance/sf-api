@@ -21,6 +21,8 @@ const createSchema = z.object({
 const listSchema = z.object({
   type: z.nativeEnum(SabitType).optional(),
   currency: z.nativeEnum(Currency).optional(),
+  page: z.string().optional().default('1'),
+  limit: z.string().optional().default('20'),
 });
 
 const idSchema = z.object({ id: z.string().uuid() });
@@ -119,31 +121,46 @@ export async function createSabit(req: Request, res: Response) {
  *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
 export async function listSabits(req: Request, res: Response) {
-  const { type, currency } = listSchema.parse(req.query);
+  const { type, currency, page, limit } = listSchema.parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
 
   const sabits = await withTransaction(async (qr) => {
-    let query = `
-      SELECT 
-        s.*, 
-        u.username as user_username, 
-        u.profile_picture_url as user_profile_picture 
-      FROM "sabits" s 
-      JOIN "users" u ON s.user_id = u.id 
-      WHERE s."status" = 'active'`;
-    const params = [];
+    const countParams: unknown[] = [];
+    const dataParams: unknown[] = [];
+
+    let baseWhere = `WHERE s."status" = 'active'`;
     if (type) {
-      params.push(type);
-      query += ` AND s."type" = ${params.length}`;
+      countParams.push(type);
+      dataParams.push(type);
+      baseWhere += ` AND s."type" = $${countParams.length}`;
     }
     if (currency) {
-      params.push(currency);
-      query += ` AND s."currency" = ${params.length}`;
+      countParams.push(currency);
+      dataParams.push(currency);
+      baseWhere += ` AND s."currency" = $${countParams.length}`;
     }
-    query += ` ORDER BY s."created_at" DESC`;
-    return (await qr.query(query, params)) as Array<Sabit & { user_username: string; user_profile_picture: string | null }>;
+
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "sabits" s ${baseWhere}`,
+      countParams,
+    )) as [{ total: string }];
+
+    dataParams.push(limitNum, offset);
+    const rows = (await qr.query(
+      `SELECT s.*, u.username as user_username, u.profile_picture_url as user_profile_picture
+       FROM "sabits" s JOIN "users" u ON s.user_id = u.id
+       ${baseWhere}
+       ORDER BY s."created_at" DESC
+       LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+      dataParams,
+    )) as Array<Sabit & { user_username: string; user_profile_picture: string | null }>;
+
+    return { rows, total: parseInt(total) };
   });
 
-  return ok(res, { sabits });
+  return ok(res, { sabits: sabits.rows, total: sabits.total, page: pageNum, limit: limitNum });
 }
 
 /**

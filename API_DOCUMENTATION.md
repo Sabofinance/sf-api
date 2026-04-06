@@ -1,12 +1,52 @@
-﻿## Sabo Finance API Documentation
+# Sabo Finance — API Documentation
 
-All responses follow the standard envelope:
+> **Base URL:** `https://api.sabofinance.com` (Production) | `http://localhost:3000` (Local)
+> **API Docs (Swagger UI):** `GET /api/docs`
+> **Version:** Current as of 2026-04-03
+
+---
+
+## Table of Contents
+
+1. [Response Envelope](#response-envelope)
+2. [Authentication](#authentication)
+3. [Error Codes](#error-codes)
+4. [Auth Endpoints](#auth-endpoints)
+5. [Account Management](#account-management)
+6. [Wallets](#wallets)
+7. [Ledger](#ledger)
+8. [Deposits](#deposits)
+9. [Withdrawals](#withdrawals)
+10. [Beneficiaries](#beneficiaries)
+11. [KYC Verification](#kyc-verification)
+12. [Exchange Rates](#exchange-rates)
+13. [Conversions](#conversions)
+14. [Sabits (P2P Listings)](#sabits-p2p-listings)
+15. [Trades](#trades)
+16. [Bids (Counter-Offers)](#bids-counter-offers)
+17. [Disputes](#disputes)
+18. [Ratings](#ratings)
+19. [Notifications](#notifications)
+20. [Admin — Auth & Setup](#admin--auth--setup)
+21. [Admin — User Management](#admin--user-management)
+22. [Admin — KYC Management](#admin--kyc-management)
+23. [Admin — Deposit Management](#admin--deposit-management)
+24. [Admin — Analytics & Reporting](#admin--analytics--reporting)
+25. [Admin — Admin Management](#admin--admin-management)
+26. [Webhooks](#webhooks)
+27. [Health Check](#health-check)
+
+---
+
+## Response Envelope
+
+All API responses follow a consistent JSON envelope structure.
 
 ### Success
 ```json
 {
   "success": true,
-  "data": {},
+  "data": { ... },
   "meta": {},
   "error": null
 }
@@ -17,28 +57,62 @@ All responses follow the standard envelope:
 {
   "success": false,
   "data": null,
+  "meta": {},
   "error": {
     "code": "ERROR_CODE",
-    "message": "Human readable message"
+    "message": "Human-readable message explaining what went wrong"
   }
 }
 ```
 
-Auth uses **Bearer JWT**:
+---
 
-`Authorization: Bearer <accessToken>`
+## Authentication
+
+The API uses **JWT Bearer tokens** for authentication.
+
+```
+Authorization: Bearer <accessToken>
+```
+
+- **Access Token:** Valid for **30 minutes** (user) / **8 hours** (admin)
+- **Refresh Token:** Valid for **30 days**
+- **Sliding window:** Access tokens are auto-renewed by the server if within 10 minutes of expiry (new token in response headers)
+- **OTP login:** Both user and admin logins require a second-factor OTP sent via email after password verification
 
 ---
 
-## Auth
+## Error Codes
 
-### Endpoint
-`POST /auth/register`
+| Code | HTTP | Description |
+|------|------|-------------|
+| `INVALID_CREDENTIALS` | 401 | Wrong email or password |
+| `INVALID_OTP` | 400 | OTP is incorrect or expired |
+| `INVALID_TOKEN` | 400 | JWT or reset token is invalid/expired |
+| `INVALID_REFRESH_TOKEN` | 401 | Refresh token invalid/expired |
+| `ACCOUNT_SUSPENDED` | 401 | User account is suspended |
+| `ACCOUNT_DELETED` | 401 | User account has been soft-deleted |
+| `UNAUTHORIZED` | 401 | Missing or invalid authentication |
+| `FORBIDDEN` | 403 | Authenticated but not authorized |
+| `KYC_NOT_VERIFIED` | 403 | KYC verification required for this action |
+| `NOT_FOUND` | 404 | Resource does not exist |
+| `INVALID_PIN` | 401 | Transaction PIN is incorrect |
+| `PIN_EXPIRED` | 400 | 30-minute trade confirmation window expired |
+| `SELF_TRADE_NOT_ALLOWED` | 400 | Cannot trade against your own listing |
+| `INSUFFICIENT_BALANCE` | 400 | Wallet balance too low |
+| `INSUFFICIENT_SABIT_AMOUNT` | 400 | Trade amount exceeds listing available amount |
+| `VALIDATION_ERROR` | 400 | Zod schema validation failure |
 
-### Description
-Registers a new user and automatically creates wallets for **NGN, GBP, USD, CAD**.
+---
 
-### Request Body
+## Auth Endpoints
+
+### `POST /auth/register`
+Registers a new user. Automatically creates 4 wallets (NGN, GBP, USD, CAD) and sends a verification email and welcome email.
+
+**Auth required:** No
+
+**Request Body:**
 ```json
 {
   "name": "Jane Doe",
@@ -48,7 +122,13 @@ Registers a new user and automatically creates wallets for **NGN, GBP, USD, CAD*
 }
 ```
 
-### Response Example
+**Validation:**
+- `name`: min 2 characters
+- `email`: valid email format
+- `phone`: 7–32 characters
+- `password`: min 8 characters
+
+**Response `201`:**
 ```json
 {
   "success": true,
@@ -56,30 +136,51 @@ Registers a new user and automatically creates wallets for **NGN, GBP, USD, CAD*
     "user": {
       "id": "uuid",
       "name": "Jane Doe",
+      "username": "jane_doe_1a2b",
       "email": "jane@example.com",
       "phone": "+2348000000000",
       "email_verified": false,
       "phone_verified": false,
       "kyc_status": "unverified",
       "role": "user",
+      "profile_picture_url": null,
       "is_suspended": false,
-      "created_at": "..."
+      "created_at": "2026-04-03T10:00:00.000Z"
     },
     "tokens": {
-      "accessToken": "jwt",
-      "refreshToken": "jwt"
+      "accessToken": "eyJ...",
+      "refreshToken": "eyJ..."
     }
   }
 }
 ```
 
-### Endpoint
-`POST /auth/login`
+---
 
-### Description
-Authenticates a user and sends an OTP to their email.
+### `GET /auth/verify-email`
+Verifies the user's email address using the signed token from the verification link.
 
-### Request Body
+**Auth required:** No
+
+**Query Params:**
+- `token` (required): JWT token from the email verification link
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Email verified successfully" }
+}
+```
+
+---
+
+### `POST /auth/login`
+Step 1 of login. Validates credentials and sends a 6-digit OTP to the user's email. OTP is valid for **10 minutes**.
+
+**Auth required:** No
+
+**Request Body:**
 ```json
 {
   "email": "jane@example.com",
@@ -87,23 +188,22 @@ Authenticates a user and sends an OTP to their email.
 }
 ```
 
-### Response Example
+**Response `200`:**
 ```json
 {
   "success": true,
-  "data": {
-    "message": "An OTP has been sent to your email."
-  }
+  "data": { "message": "An OTP has been sent to your email." }
 }
 ```
 
-### Endpoint
-`POST /auth/verify-otp`
+---
 
-### Description
-Verifies the OTP sent during login and returns access/refresh tokens.
+### `POST /auth/verify-otp`
+Step 2 of login. Verifies the OTP and returns JWT tokens.
 
-### Request Body
+**Auth required:** No
+
+**Request Body:**
 ```json
 {
   "email": "jane@example.com",
@@ -111,258 +211,550 @@ Verifies the OTP sent during login and returns access/refresh tokens.
 }
 ```
 
-### Response Example
+**Validation:**
+- `otp`: exactly 6 characters
+
+**Response `200`:**
 ```json
 {
   "success": true,
   "data": {
     "tokens": {
-      "accessToken": "jwt",
-      "refreshToken": "jwt"
+      "accessToken": "eyJ...",
+      "refreshToken": "eyJ..."
     }
   }
 }
 ```
 
-### Endpoint
-`POST /auth/refresh-token`
+---
 
-### Description
-Refreshes the access token using a valid refresh token.
+### `POST /auth/refresh-token`
+Exchanges a valid refresh token for new access and refresh tokens.
 
-### Request Body
+**Auth required:** No
+
+**Request Body:**
 ```json
 {
-  "refreshToken": "jwt"
+  "refreshToken": "eyJ..."
 }
 ```
 
-### Response Example
+**Response `200`:**
 ```json
 {
   "success": true,
   "data": {
     "tokens": {
-      "accessToken": "jwt",
-      "refreshToken": "jwt"
+      "accessToken": "eyJ...",
+      "refreshToken": "eyJ..."
     }
   }
 }
 ```
 
-### Endpoint
-`POST /auth/forgot-password`
+---
 
-### Description
-Sends a password reset link to the user's email.
+### `POST /auth/forgot-password`
+Sends a password reset link to the user's email. Link is valid for **10 minutes**. Always returns 200 (to prevent email enumeration).
 
-### Request Body
+**Auth required:** No
+
+**Request Body:**
 ```json
 {
   "email": "jane@example.com"
 }
 ```
 
-### Endpoint
-`POST /auth/reset-password`
-
-### Description
-Resets the user's password using the token from the reset link.
-
-### Request Body
-```json
-{
-  "token": "reset-token",
-  "password": "NewPassword123!"
-}
-```
-
-### Endpoint
-`POST /auth/logout`
-
-### Description
-Logout endpoint (client discards tokens).
-
-### Auth Required
-Yes
-
----
-
-### Endpoint
-`GET /admin/dashboard`
-
-### Description
-Retrieves aggregated statistics for the admin dashboard, including user counts, KYC statuses, and chart data for the last 7 days.
-
-### Auth Required
-Yes (Admin)
-
-### Response Example
+**Response `200`:**
 ```json
 {
   "success": true,
   "data": {
-    "users": { "total": "100", "active": "95", "suspended": "5" },
-    "kyc": { "total": "50", "pending": "10", "verified": "35", "rejected": "5" },
-    "pendingDeposits": [],
-    "recentKyc": [],
-    "charts": {
-      "kycSubmissions": [{ "label": "Mon", "value": "5" }, "..."],
-      "deposits": [{ "label": "Mon", "value": "2" }, "..."]
+    "message": "If a user with that email exists, a password reset link has been sent."
+  }
+}
+```
+
+---
+
+### `POST /auth/reset-password`
+Resets the user's password using the token from the reset email.
+
+**Auth required:** No
+
+**Request Body:**
+```json
+{
+  "token": "hex-reset-token",
+  "password": "NewPassword123!"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Password has been reset successfully." }
+}
+```
+
+---
+
+### `POST /auth/logout`
+Logout. The server has no token state — the client discards the tokens. A confirmation response is returned.
+
+**Auth required:** Yes
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "loggedOut": true }
+}
+```
+
+---
+
+### `GET /auth/me`
+Returns the full profile of the currently authenticated user.
+
+**Auth required:** Yes
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "uuid",
+      "name": "Jane Doe",
+      "username": "jane_doe_1a2b",
+      "email": "jane@example.com",
+      "phone": "+2348000000000",
+      "email_verified": true,
+      "phone_verified": false,
+      "kyc_status": "verified",
+      "transaction_pin_set": true,
+      "role": "user",
+      "profile_picture_url": "https://res.cloudinary.com/...",
+      "is_suspended": false,
+      "created_at": "2026-04-03T10:00:00.000Z"
     }
   }
 }
 ```
 
-## Notifications
+---
 
-### Endpoint
-`GET /notifications`
+## Account Management
 
-### Description
-Lists notifications for the authenticated user (including global alerts). Admins see all notifications.
+### `PUT /account/username`
+Updates the authenticated user's username.
 
-### Auth Required
-Yes
+**Auth required:** Yes
 
-### Query Params
-- `page` (optional, default 1)
-- `limit` (optional, default 20)
+**Request Body:**
+```json
+{
+  "username": "jane_doe_new"
+}
+```
 
-### Endpoint
-`PATCH /notifications/:id/read`
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Username updated successfully." }
+}
+```
 
-### Description
-Marks a specific notification as read.
+---
 
-### Auth Required
-Yes
+### `POST /account/transaction-pin/set`
+Sets or changes the user's 6-digit transaction PIN. Required before initiating or confirming trades.
 
-### Endpoint
-`POST /notifications/mark-all-read`
+**Auth required:** Yes
 
-### Description
-Marks all notifications for the authenticated user as read.
+**Request Body:**
+```json
+{
+  "pin": "123456"
+}
+```
 
-### Auth Required
-Yes
+**Validation:** `pin` must be exactly 6 digits.
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Transaction PIN set successfully." }
+}
+```
+
+---
+
+### `POST /account/transaction-pin/verify`
+Verifies the user's current transaction PIN without performing a trade action.
+
+**Auth required:** Yes
+
+**Request Body:**
+```json
+{
+  "pin": "123456"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "valid": true }
+}
+```
+
+---
+
+### `POST /account/profile/picture`
+Uploads a new profile picture via Cloudinary.
+
+**Auth required:** Yes
+
+**Request:** `multipart/form-data`
+- `file`: image file (max 10MB)
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "profile_picture_url": "https://res.cloudinary.com/..." }
+}
+```
+
+---
+
+### `POST /account/delete/initiate`
+Initiates account deletion. Sends an OTP to the user's email to confirm the action.
+
+**Auth required:** Yes
+
+**Rate Limit:** 10 requests per 15 minutes
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "A confirmation code has been sent to your email." }
+}
+```
+
+---
+
+### `POST /account/delete/confirm`
+Confirms account deletion using the OTP. Performs a soft delete (`deleted_at` timestamp set).
+
+**Auth required:** Yes
+
+**Request Body:**
+```json
+{
+  "otp": "123456"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Your account has been deleted." }
+}
+```
+
+---
+
+### `POST /account/email-change/initiate`
+Initiates an email address change. Sends an OTP to the **new** email and an alert to the old email.
+
+**Auth required:** Yes
+
+**Rate Limit:** 10 requests per 15 minutes
+
+**Request Body:**
+```json
+{
+  "new_email": "new@example.com"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "A verification code has been sent to your new email address." }
+}
+```
+
+---
+
+### `POST /account/email-change/confirm`
+Confirms the email change using the OTP sent to the new email.
+
+**Auth required:** Yes
+
+**Request Body:**
+```json
+{
+  "otp": "123456"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Email address updated successfully." }
+}
+```
 
 ---
 
 ## Wallets
 
-### Endpoint
-`GET /wallets`
+### `GET /wallets`
+Returns all wallets for the authenticated user (NGN, GBP, USD, CAD).
 
-### Description
-Returns all wallets for the authenticated user.
+**Auth required:** Yes
 
-### Auth Required
-Yes
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "wallets": [
+      {
+        "id": "uuid",
+        "user_id": "uuid",
+        "currency": "NGN",
+        "balance": "25000.00",
+        "locked_balance": "5000.00",
+        "escrow_balance": "0.00",
+        "updated_at": "2026-04-03T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
 
-### Endpoint
-`GET /wallets/:currency`
+---
 
-### Description
-Returns a wallet by currency (`NGN|GBP|USD|CAD`).
+### `GET /wallets/:currency`
+Returns a single wallet by currency code.
 
-### Auth Required
-Yes
+**Auth required:** Yes
+
+**Path Params:**
+- `currency`: `NGN` | `GBP` | `USD` | `CAD`
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "wallet": {
+      "id": "uuid",
+      "currency": "GBP",
+      "balance": "500.00",
+      "locked_balance": "0.00",
+      "escrow_balance": "100.00",
+      "updated_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
 
 ---
 
 ## Ledger
 
-### Endpoint
-`GET /ledger`
+### `GET /ledger`
+Lists all ledger (transaction history) entries for the authenticated user across all wallets.
 
-### Description
-Lists ledger entries for the authenticated user.
+**Auth required:** Yes
 
-### Query Params
-- `from` (date-time)
-- `to` (date-time)
-- `type` (ledger type enum)
-- `currency` (NGN|GBP|USD|CAD)
+**Query Params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `from` | ISO date-time | Filter entries from this date |
+| `to` | ISO date-time | Filter entries to this date |
+| `type` | enum | Ledger entry type (see below) |
+| `currency` | enum | `NGN` \| `GBP` \| `USD` \| `CAD` |
+| `page` | number | Page number (default: 1) |
+| `limit` | number | Items per page (default: 20) |
 
-### Auth Required
-Yes
+**Ledger Types:** `deposit`, `withdrawal`, `trade_debit`, `trade_credit`, `escrow_hold`, `escrow_release`, `reversal`, `adjustment`
 
-### Endpoint
-`GET /ledger/:walletId`
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "entries": [
+      {
+        "id": "uuid",
+        "reference": "TXN-2026-0001",
+        "type": "deposit",
+        "currency": "NGN",
+        "amount": "5000.00",
+        "balance_before": "20000.00",
+        "balance_after": "25000.00",
+        "status": "completed",
+        "created_at": "2026-04-03T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
 
-### Description
-Lists ledger entries for a specific wallet (must belong to the user).
+---
 
-### Auth Required
-Yes
+### `GET /ledger/:walletId`
+Lists ledger entries for a specific wallet. The wallet must belong to the authenticated user.
+
+**Auth required:** Yes
+
+**Path Params:**
+- `walletId`: UUID of the wallet
+
+**Query Params:** Same as `GET /ledger`
 
 ---
 
 ## Deposits
 
-### Endpoint
-`POST /deposits/ngn/initiate`
+### `POST /deposits/ngn/initiate`
+Initiates an NGN deposit via Flutterwave. Returns a deposit reference used to track the payment via webhook.
 
-### Description
-Creates a Flutterwave NGN deposit record and returns the deposit reference.
+**Auth required:** Yes
 
-### Auth Required
-Yes
-
-### Request Body
+**Request Body:**
 ```json
 {
   "amount": "5000.00"
 }
 ```
 
-### Endpoint
-`POST /deposits/foreign`
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "deposit": {
+      "id": "uuid",
+      "reference": "DEP-2026-0001",
+      "amount": "5000.00",
+      "currency": "NGN",
+      "status": "initiated",
+      "provider": "flutterwave",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
 
-### Description
-Submit manual foreign deposit (GBP/USD/CAD) with proof upload. Wallet is credited **only on admin approval**.
+---
 
-### Auth Required
-Yes
+### `POST /deposits/foreign`
+Submits a manual foreign currency deposit (GBP, USD, or CAD) with proof of payment. The wallet is credited **only after admin approval**.
 
-### Request (multipart/form-data)
-- `currency`: `GBP|USD|CAD`
-- `amount`: string
-- `proof`: file
+**Auth required:** Yes
 
-### Endpoint
-`GET /deposits`
+**Request:** `multipart/form-data`
+| Field | Type | Description |
+|-------|------|-------------|
+| `currency` | string | `GBP` \| `USD` \| `CAD` |
+| `amount` | string | Amount to deposit (e.g., `"100.00"`) |
+| `proof` | file | Screenshot or bank transfer proof (max 10MB) |
 
-### Description
-List deposits for the authenticated user.
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "deposit": {
+      "id": "uuid",
+      "reference": "DEP-2026-0002",
+      "currency": "GBP",
+      "amount": "100.00",
+      "status": "pending_review",
+      "proof_url": "https://res.cloudinary.com/...",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
 
-### Auth Required
-Yes
+---
 
-### Endpoint
-`GET /deposits/:id`
+### `GET /deposits`
+Lists all deposits for the authenticated user.
 
-### Description
-Get deposit by id (owned by the authenticated user).
+**Auth required:** Yes
 
-### Auth Required
-Yes
+**Query Params:**
+- `page` (default: 1)
+- `limit` (default: 20)
+- `status`: `initiated` | `pending_review` | `completed` | `failed` | `expired` | `rejected`
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "deposits": [ { ... } ]
+  }
+}
+```
+
+---
+
+### `GET /deposits/:id`
+Gets a single deposit by ID. Must be owned by the authenticated user.
+
+**Auth required:** Yes
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "deposit": {
+      "id": "uuid",
+      "reference": "DEP-2026-0001",
+      "currency": "NGN",
+      "amount": "5000.00",
+      "status": "completed",
+      "provider": "flutterwave",
+      "provider_reference": "FLW-xxx",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
 
 ---
 
 ## Withdrawals
 
-### Endpoint
-`POST /withdrawals/request`
+### `POST /withdrawals/request`
+Requests a withdrawal to a saved beneficiary. Deducts from the wallet immediately and creates an admin-pending withdrawal record.
 
-### Description
-Requests a new withdrawal to a specified beneficiary.
+**Auth required:** Yes (KYC Verified)
 
-### Auth Required
-Yes (Verified User)
-
-### Request Body
+**Request Body:**
 ```json
 {
   "beneficiary_id": "uuid",
@@ -370,81 +762,197 @@ Yes (Verified User)
 }
 ```
 
-### Endpoint
-`GET /withdrawals`
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "withdrawal": {
+      "id": "uuid",
+      "reference": "WDR-2026-0001",
+      "amount": "1000.00",
+      "currency": "NGN",
+      "status": "requested",
+      "beneficiary_id": "uuid",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
 
-### Description
-List withdrawals for the authenticated user.
+---
 
-### Auth Required
-Yes
+### `GET /withdrawals`
+Lists all withdrawals for the authenticated user.
 
-### Endpoint
-`GET /withdrawals/:id`
+**Auth required:** Yes
 
-### Description
-Get a specific withdrawal by ID.
+**Query Params:**
+- `page` (default: 1)
+- `limit` (default: 20)
 
-### Auth Required
-Yes
+---
+
+### `GET /withdrawals/:id`
+Gets a single withdrawal by ID. Must be owned by the authenticated user.
+
+**Auth required:** Yes
 
 ---
 
 ## Beneficiaries
 
-### Endpoint
-`POST /beneficiaries`
+### `POST /beneficiaries`
+Adds a new beneficiary (bank account) for withdrawals.
 
-### Description
-Adds a new beneficiary for withdrawals.
+**Auth required:** Yes (KYC Verified)
 
-### Auth Required
-Yes (Verified User)
-
-### Request Body
+**Request Body:**
 ```json
 {
-  "currency": "GBP|USD|CAD|NGN",
-  "bank_name": "First Bank",
-  "account_name": "John Doe",
-  "account_number": "1234567890",
-  "sort_code": "01-02-03",
+  "currency": "GBP",
+  "bank_name": "Barclays",
+  "account_name": "Jane Doe",
+  "account_number": "12345678",
+  "sort_code": "20-00-00",
   "iban": "GB29NWBK60161331926819"
 }
 ```
 
-### Endpoint
-`GET /beneficiaries`
+**Field Rules:**
+- For **NGN**: `bank_name`, `account_name`, `account_number` required
+- For **GBP/USD/CAD**: `bank_name`, `account_name`, and optionally `iban` / `sort_code` / `account_number`
 
-### Description
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "beneficiary": {
+      "id": "uuid",
+      "currency": "GBP",
+      "bank_name": "Barclays",
+      "account_name": "Jane Doe",
+      "is_default": false
+    }
+  }
+}
+```
+
+---
+
+### `GET /beneficiaries`
 Lists all beneficiaries for the authenticated user.
 
-### Auth Required
-Yes
+**Auth required:** Yes
 
-### Endpoint
-`DELETE /beneficiaries/:id`
+---
 
-### Description
-Deletes a beneficiary.
+### `DELETE /beneficiaries/:id`
+Deletes a beneficiary. Must be owned by the authenticated user.
 
-### Auth Required
-Yes
+**Auth required:** Yes
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Beneficiary removed." }
+}
+```
+
+---
+
+## KYC Verification
+
+### `POST /kyc/upload`
+Submits KYC documents for review. Sets user's `kyc_status` to `pending`.
+
+**Auth required:** Yes
+
+**Request:** `multipart/form-data`
+| Field | Type | Description |
+|-------|------|-------------|
+| `document_type` | string | e.g., `passport`, `national_id`, `drivers_license` |
+| `document` | file | Document image (max 10MB) |
+| `selfie` | file | Selfie/liveness photo (max 10MB) |
+
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "kyc": {
+      "id": "uuid",
+      "status": "pending",
+      "document_type": "passport",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
+
+---
+
+### `GET /kyc/status`
+Returns the user's current KYC status and latest KYC submission record.
+
+**Auth required:** Yes
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "kyc_status": "pending",
+    "kyc": {
+      "id": "uuid",
+      "status": "pending",
+      "document_type": "passport",
+      "document_url": "https://res.cloudinary.com/...",
+      "selfie_url": "https://res.cloudinary.com/...",
+      "rejection_reason": null,
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
+
+**KYC Statuses:** `unverified` | `pending` | `verified` | `rejected`
+
+---
+
+## Exchange Rates
+
+### `GET /rates`
+Returns the latest FX rates for all supported currency pairs. Rates are synced automatically via a background job.
+
+**Auth required:** No
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "rates": [
+      { "pair": "GBP/NGN", "rate": "2050.00", "source": "auto", "created_at": "..." },
+      { "pair": "USD/NGN", "rate": "1600.00", "source": "auto", "created_at": "..." },
+      { "pair": "CAD/NGN", "rate": "1180.00", "source": "auto", "created_at": "..." }
+    ]
+  }
+}
+```
 
 ---
 
 ## Conversions
 
-### Endpoint
-`POST /conversions/quote`
+### `POST /conversions/quote`
+Generates a conversion quote between two currencies. Does **not** execute the conversion.
 
-### Description
-Gets a conversion quote between two currencies.
+**Auth required:** Yes (KYC Verified)
 
-### Auth Required
-Yes (Verified User)
-
-### Request Body
+**Request Body:**
 ```json
 {
   "from": "USD",
@@ -453,7 +961,7 @@ Yes (Verified User)
 }
 ```
 
-### Response Example
+**Response `200`:**
 ```json
 {
   "success": true,
@@ -462,24 +970,22 @@ Yes (Verified User)
       "from": "USD",
       "to": "NGN",
       "amount": "100.00",
-      "resultAmount": "150000.00",
-      "rate": "1500.00",
-      "expiresAt": "..."
+      "resultAmount": "160000.00",
+      "rate": "1600.00",
+      "expiresAt": "2026-04-03T10:05:00.000Z"
     }
   }
 }
 ```
 
-### Endpoint
-`POST /conversions/execute`
+---
 
-### Description
-Executes a currency conversion.
+### `POST /conversions/execute`
+Executes a currency conversion. Debits the source wallet and credits the target wallet in a single atomic transaction.
 
-### Auth Required
-Yes (Verified User)
+**Auth required:** Yes (KYC Verified)
 
-### Request Body
+**Request Body:**
 ```json
 {
   "from": "USD",
@@ -488,381 +994,1057 @@ Yes (Verified User)
 }
 ```
 
----
-
-## Sabits (P2P Listings)
-
-### Endpoint
-`POST /sabits`
-
-### Description
-Creates a new Sabit (P2P listing) to buy or sell foreign currency.
-
-### Auth Required
-Yes (Verified User)
-
-### Request Body
-```json
-{
-  "type": "BUY|SELL",
-  "currency": "GBP|USD|CAD",
-  "amount": "100.00",
-  "rate_ngn": "1500.00"
-}
-```
-
-### Endpoint
-`GET /sabits`
-
-### Description
-Lists all active Sabits. Can be filtered by `type` and `currency`.
-
-### Query Params
-- `type` (BUY|SELL)
-- `currency` (GBP|USD|CAD)
-
-### Endpoint
-`GET /sabits/:id`
-
-### Description
-Gets a specific Sabit by ID.
-
-### Endpoint
-`POST /sabits/:id/cancel`
-
-### Description
-Cancels an active Sabit and releases locked funds.
-
-### Auth Required
-Yes
-
----
-
-## Trades
-
-### Endpoint
-`GET /trades`
-
-### Description
-Lists all trades for the authenticated user (either as buyer or seller).
-
-### Parameters
-- `page` (query, optional): Page number (default: 1)
-- `limit` (query, optional): Items per page (default: 20)
-- `status` (query, optional): Filter by status (e.g., "completed", "escrowed")
-
-### Response Example
+**Response `200`:**
 ```json
 {
   "success": true,
   "data": {
-    "trades": [...]
-  }
-}
-```
-
-### Endpoint
-`GET /trades/:id`
-
-### Description
-Gets details of a single trade by its ID. Only the buyer or seller of the trade can access it.
-
-### Parameters
-- `id` (path): The trade UUID.
-
-### Response Example
-```json
-{
-  "success": true,
-  "data": {
-    "trade": {
-      "id": "...",
-      "reference": "...",
-      "status": "...",
-      "buyer_name": "...",
-      "seller_name": "...",
-      ...
+    "conversion": {
+      "reference": "TXN-2026-0010",
+      "from": "USD",
+      "to": "NGN",
+      "amount": "100.00",
+      "resultAmount": "160000.00",
+      "rate": "1600.00"
     }
   }
 }
 ```
 
-### Endpoint
-`POST /trades/initiate`
+---
 
-### Description
-Initiates a trade against an active Sabit.
+## Sabits (P2P Listings)
 
-### Auth Required
-Yes (Verified User)
+Sabits are P2P marketplace listings for trading foreign currency against NGN.
 
-### Request Body
+### `POST /sabits`
+Creates a new Sabit listing. Locks the corresponding wallet funds immediately.
+
+- A **SELL** sabit locks the seller's foreign currency.
+- A **BUY** sabit locks the buyer's NGN equivalent.
+
+**Auth required:** Yes (KYC Verified)
+
+**Request Body:**
 ```json
 {
-  "sabit_id": "uuid",
-  "amount": "50.00"
+  "type": "SELL",
+  "currency": "GBP",
+  "amount": "200.00",
+  "rate_ngn": "2050.00",
+  "payment_methods": ["bank_transfer", "cash"]
 }
 ```
 
-### Endpoint
-`POST /trades/:id/confirm`
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "sabit": {
+      "id": "uuid",
+      "type": "SELL",
+      "currency": "GBP",
+      "amount": "200.00",
+      "available_amount": "200.00",
+      "rate_ngn": "2050.00",
+      "payment_methods": ["bank_transfer", "cash"],
+      "status": "active",
+      "user_id": "uuid",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
 
-### Description
-Seller confirms the trade, moving funds to escrow.
+---
 
-### Auth Required
-Yes
+### `GET /sabits`
+Lists all active Sabits on the marketplace. Public endpoint.
 
-### Endpoint
-`POST /trades/:id/complete`
+**Auth required:** No
 
-### Description
-Seller completes the trade after receiving payment, settling the trade and releasing funds from escrow to the buyer.
+**Query Params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `type` | string | `BUY` \| `SELL` |
+| `currency` | string | `GBP` \| `USD` \| `CAD` |
+| `page` | number | Default: 1 |
+| `limit` | number | Default: 20 |
 
-### Auth Required
-Yes
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "sabits": [ { ... } ]
+  }
+}
+```
+
+---
+
+### `GET /sabits/:id`
+Gets a single Sabit by ID. Public endpoint.
+
+**Auth required:** No
+
+---
+
+### `POST /sabits/:id/cancel`
+Cancels an active Sabit and releases the locked wallet funds back to the user.
+
+**Auth required:** Yes (KYC Verified, must be owner)
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Sabit cancelled and funds released." }
+}
+```
+
+---
+
+## Trades
+
+Trades are executed transactions between a Sabit owner (seller) and a counterpart (buyer).
+
+### Trade Lifecycle
+
+```
+initiated → escrowed → completed
+                   ↘ disputed
+          ↘ cancelled (PIN expired)
+```
+
+**PIN Confirmation Window:** When a trade is initiated, both parties have **30 minutes** to confirm using their transaction PIN. If the seller does not confirm via `PUT /trades/:id/seller-confirm` within this window, the trade is automatically cancelled and locked funds are released.
+
+---
+
+### `POST /trades/initiate`
+Initiates a trade against an active Sabit. Requires buyer's transaction PIN. Locks funds and notifies the seller.
+
+**Auth required:** Yes (KYC Verified)
+
+**Request Body:**
+```json
+{
+  "sabit_id": "uuid",
+  "amount": "50.00",
+  "pin": "123456"
+}
+```
+
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "trade": {
+      "id": "uuid",
+      "reference": "TXN-2026-0001",
+      "sabit_id": "uuid",
+      "buyer_id": "uuid",
+      "seller_id": "uuid",
+      "currency": "GBP",
+      "amount": "50.00",
+      "rate_ngn": "2050.00",
+      "total_ngn": "102500.00",
+      "status": "initiated",
+      "buyer_pin_verified": true,
+      "pin_expires_at": "2026-04-03T10:30:00.000Z",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
+
+---
+
+### `PUT /trades/:id/seller-confirm`
+Seller confirms the trade with their PIN. Must be done within the 30-minute window. On success, immediately settles the trade (transfers NGN to seller, foreign currency to buyer) and marks as `completed`.
+
+**Auth required:** Yes (KYC Verified, must be the seller)
+
+**Request Body:**
+```json
+{
+  "pin": "123456"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Trade confirmed and settled successfully" }
+}
+```
+
+---
+
+### `POST /trades/:id/confirm`
+Legacy seller confirmation. Moves trade status to `escrowed`. Use `PUT /trades/:id/seller-confirm` for the full settlement flow.
+
+**Auth required:** Yes (must be the seller)
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Trade confirmed and funds are in escrow" }
+}
+```
+
+---
+
+### `POST /trades/:id/complete`
+Completes an escrowed trade (legacy flow). Settles NGN and foreign currency to the respective parties.
+
+**Auth required:** Yes (must be the seller)
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Trade completed successfully" }
+}
+```
+
+---
+
+### `GET /trades`
+Lists all trades for the authenticated user (as buyer or seller).
+
+**Auth required:** Yes (KYC Verified)
+
+**Query Params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `page` | number | Default: 1 |
+| `limit` | number | Default: 20 |
+| `status` | string | `initiated` \| `escrowed` \| `confirmed` \| `completed` \| `cancelled` \| `disputed` |
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "trades": [
+      {
+        "id": "uuid",
+        "reference": "TXN-2026-0001",
+        "status": "completed",
+        "currency": "GBP",
+        "amount": "50.00",
+        "rate_ngn": "2050.00",
+        "total_ngn": "102500.00",
+        "buyer_name": "Jane Doe",
+        "seller_name": "John Smith",
+        "created_at": "2026-04-03T10:00:00.000Z",
+        "completed_at": "2026-04-03T10:15:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `GET /trades/:id`
+Gets a single trade by ID. Only accessible to the buyer or seller of the trade.
+
+**Auth required:** Yes (KYC Verified)
+
+---
+
+## Bids (Counter-Offers)
+
+Bids allow buyers to propose a different rate on an existing SELL Sabit. The bid locks the buyer's funds and expires after **24 hours** if not accepted.
+
+### `POST /bids`
+Places a bid (counter-offer) on a SELL Sabit.
+
+**Auth required:** Yes (KYC Verified)
+
+**Request Body:**
+```json
+{
+  "sabit_id": "uuid",
+  "amount": "100.00",
+  "proposed_rate_ngn": "1480.00",
+  "pin": "123456"
+}
+```
+
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "bid": {
+      "id": "uuid",
+      "sabit_id": "uuid",
+      "buyer_id": "uuid",
+      "seller_id": "uuid",
+      "amount": "100.00",
+      "proposed_rate_ngn": "1480.00",
+      "original_rate_ngn": "1500.00",
+      "total_ngn_at_bid_rate": "148000.00",
+      "status": "pending",
+      "expires_at": "2026-04-04T10:00:00.000Z"
+    }
+  }
+}
+```
+
+---
+
+### `GET /bids/mine`
+Lists all bids placed by the authenticated user.
+
+**Auth required:** Yes
+
+**Query Params:**
+- `page` (default: 1)
+- `limit` (default: 20)
+
+---
+
+### `GET /bids/received`
+Lists all bids received by the authenticated user on their Sabits.
+
+**Auth required:** Yes
+
+---
+
+### `PUT /bids/:id/accept`
+Seller accepts a bid. Triggers trade creation and fund settlement.
+
+**Auth required:** Yes (must be the Sabit owner)
+
+**Request Body:**
+```json
+{
+  "pin": "123456"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Bid accepted. Trade created.",
+    "trade": { ... }
+  }
+}
+```
+
+---
+
+### `PUT /bids/:id/reject`
+Seller rejects a bid. Releases the buyer's locked funds.
+
+**Auth required:** Yes (must be the Sabit owner)
+
+**Request Body:**
+```json
+{
+  "pin": "123456",
+  "reason": "Rate too low"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Bid rejected." }
+}
+```
+
+---
+
+### `PUT /bids/:id/withdraw`
+Buyer withdraws their own pending bid. Releases locked funds.
+
+**Auth required:** Yes (must be the bid placer)
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Bid withdrawn." }
+}
+```
 
 ---
 
 ## Disputes
 
-### Endpoint
-`POST /disputes/raise`
+Disputes can be raised on trades that are in `escrowed` or `confirmed` status.
 
-### Description
-Raises a dispute for an escrowed or confirmed trade.
+### `POST /disputes/raise`
+Raises a dispute for a trade.
 
-### Auth Required
-Yes (Verified User)
+**Auth required:** Yes (KYC Verified, must be buyer or seller of the trade)
 
-### Request Body
+**Request Body:**
 ```json
 {
   "trade_id": "uuid",
-  "reason": "Detailed reason for the dispute (min 20 chars)"
+  "reason": "Seller has not released funds after I sent payment (min 20 chars)"
 }
 ```
 
-### Endpoint
-`GET /disputes`
+**Validation:** `reason` must be at least 20 characters.
 
-### Description
-Lists all disputes where the user is a party (buyer or seller).
-
-### Auth Required
-Yes
-
-### Endpoint
-`GET /disputes/:id`
-
-### Description
-Gets a specific dispute by ID.
-
-### Auth Required
-Yes
-
----
-
-## KYC
-
-### Endpoint
-`POST /kyc/upload`
-
-### Description
-Uploads KYC document and selfie. Sets user KYC status to `pending`.
-
-### Auth Required
-Yes
-
-### Request (multipart/form-data)
-- `document_type`: string
-- `document`: file
-- `selfie`: file
-
-### Endpoint
-`GET /kyc/status`
-
-### Description
-Returns the user's current KYC status and the latest KYC record.
-
-### Auth Required
-Yes
-
----
-
-## Exchange Rates
-
-### Endpoint
-`GET /rates`
-
-### Description
-Returns the latest exchange rates for all currency pairs.
-
----
-
-## Admin
-
-### Endpoint
-`POST /admin/auth/login`
-
-### Description
-Admin Step 1: Verify password and send an OTP to the admin's email.
-
-### Request Body
+**Response `201`:**
 ```json
 {
-  "email": "admin@example.com",
-  "password": "AdminPassword123!"
+  "success": true,
+  "data": {
+    "dispute": {
+      "id": "uuid",
+      "trade_id": "uuid",
+      "raised_by_id": "uuid",
+      "reason": "...",
+      "status": "open",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
 }
 ```
 
-### Endpoint
-`POST /admin/auth/verify-otp`
+---
 
-### Description
-Admin Step 2: Verify the OTP and issue an admin-scoped JWT.
+### `GET /disputes`
+Lists all disputes where the authenticated user is a party (buyer or seller).
 
-### Response Example
+**Auth required:** Yes
+
+---
+
+### `GET /disputes/:id`
+Gets a single dispute by ID. Must be a party to the dispute.
+
+**Auth required:** Yes
+
+---
+
+## Ratings
+
+Post-trade ratings for sellers. Can only be submitted once per trade.
+
+### `POST /ratings`
+Submits a rating for the seller after a completed trade.
+
+**Auth required:** Yes
+
+**Request Body:**
+```json
+{
+  "trade_id": "uuid",
+  "score": 5,
+  "comment": "Quick and trustworthy seller!"
+}
+```
+
+**Validation:**
+- `score`: integer 1–5
+- `comment`: optional string
+
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": {
+    "rating": {
+      "id": "uuid",
+      "trade_id": "uuid",
+      "rater_id": "uuid",
+      "rated_user_id": "uuid",
+      "score": 5,
+      "comment": "Quick and trustworthy seller!",
+      "created_at": "2026-04-03T10:00:00.000Z"
+    }
+  }
+}
+```
+
+---
+
+## Notifications
+
+### `GET /notifications`
+Lists notifications for the authenticated user. Includes global (broadcast) notifications. Admins see all notifications.
+
+**Auth required:** Yes
+
+**Query Params:**
+- `page` (default: 1)
+- `limit` (default: 20)
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "notifications": [
+      {
+        "id": "uuid",
+        "title": "Trade Completed",
+        "message": "Your trade TXN-2026-0001 has been settled.",
+        "type": "success",
+        "status": "unread",
+        "related_id": "uuid",
+        "created_at": "2026-04-03T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+**Notification Types:** `info` | `success` | `warning` | `error`
+
+---
+
+### `PATCH /notifications/:id/read`
+Marks a specific notification as read.
+
+**Auth required:** Yes
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Notification marked as read." }
+}
+```
+
+---
+
+### `POST /notifications/mark-all-read`
+Marks all notifications for the authenticated user as read.
+
+**Auth required:** Yes
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "All notifications marked as read." }
+}
+```
+
+---
+
+## Admin — Auth & Setup
+
+Admin tokens have an **8-hour** access token lifetime (vs. 30 min for users).
+
+### `POST /admin/auth/login`
+Step 1 of admin login. Validates credentials (must be `admin` or `super_admin` role) and sends OTP.
+
+**Auth required:** No
+
+**Request Body:**
+```json
+{
+  "email": "admin@sabofinance.com",
+  "password": "AdminPass123!"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "An OTP has been sent to your email." }
+}
+```
+
+---
+
+### `POST /admin/auth/verify-otp`
+Step 2 of admin login. Verifies OTP and returns admin-scoped JWT tokens.
+
+**Auth required:** No
+
+**Request Body:**
+```json
+{
+  "email": "admin@sabofinance.com",
+  "otp": "123456"
+}
+```
+
+**Response `200`:**
 ```json
 {
   "success": true,
   "data": {
     "tokens": {
-      "accessToken": "jwt",
-      "refreshToken": "jwt"
+      "accessToken": "eyJ...",
+      "refreshToken": "eyJ..."
     },
     "user": {
       "id": "uuid",
       "name": "Admin User",
-      "email": "admin@example.com",
+      "email": "admin@sabofinance.com",
       "role": "admin"
     }
   }
 }
 ```
 
-### Endpoint
-`GET /admin/users`
+---
 
-### Description
-Lists all users (Paginated).
+### `GET /admin/invites/accept`
+Validates an admin invite token from an invite email link. Returns invite metadata.
 
-### Auth Required
-Yes (Admin)
+**Auth required:** No
 
-### Endpoint
-`GET /admin/users/:id`
+**Query Params:**
+- `token` (required): Invite token from email
 
-### Description
-Gets a specific user and their wallets.
+---
 
-### Auth Required
-Yes (Admin)
+### `POST /admin/invites/setup`
+Completes admin onboarding — sets the admin's name and password using the invite token.
 
-### Endpoint
-`POST /admin/users/:id/suspend`  
+**Auth required:** No
 
-### Description
-Suspends a user account.
-
-### Auth Required
-Yes (Admin)
-
-### Endpoint
-`POST /admin/users/:id/reinstate`
-
-### Description
-Reinstates a suspended user account.
-
-### Auth Required
-Yes (Admin)
-
-### Endpoint
-`GET /admin/kyc`
-
-### Description
-Lists all KYC submissions (Paginated).
-
-### Auth Required
-Yes (Admin)
-
-### Endpoint
-`POST /admin/kyc/:id/approve`
-
-### Description
-Approves a KYC submission and verifies the user.
-
-### Auth Required
-Yes (Admin)
-
-### Endpoint
-`POST /admin/kyc/:id/reject`
-
-### Description
-Rejects a KYC submission with a reason.
-
-### Auth Required
-Yes (Admin)
-
-### Request Body
+**Request Body:**
 ```json
 {
-  "reason": "Document is not clear"
+  "token": "invite-token",
+  "name": "New Admin",
+  "password": "SecurePass123!"
 }
 ```
 
-### Endpoint
-`POST /admin/deposits/:id/approve`
+---
 
-### Description
-Approves a pending manual deposit and credits the user's wallet.
+## Admin — User Management
 
-### Auth Required
-Yes (Admin)
+All routes below require: **Auth (Admin or Super Admin)**
 
-### Endpoint
-`POST /admin/deposits/:id/reject`
+### `GET /admin/users`
+Lists all platform users with pagination.
 
-### Description
-Rejects a pending manual deposit.
+**Query Params:**
+- `page` (default: 1)
+- `limit` (default: 20)
+- `search` (optional): search by name/email
 
-### Auth Required
-Yes (Admin)
-
-### Endpoint
-`GET /admin/trades`
-
-### Description
-Lists all trades across the platform (Admin only).
-
-### Parameters
-- `page` (query, optional): Page number (default: 1)
-- `limit` (query, optional): Items per page (default: 20)
-
-### Response Example
+**Response `200`:**
 ```json
 {
   "success": true,
   "data": {
-    "trades": [...]
+    "users": [ { "id": "uuid", "name": "...", "email": "...", "kyc_status": "...", "role": "user", ... } ],
+    "total": 150
   }
 }
 ```
 
-### Auth Required
-Yes (Admin)
+---
+
+### `GET /admin/users/:id`
+Gets a specific user's full profile including all their wallets.
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": { ... },
+    "wallets": [ { "currency": "NGN", "balance": "...", ... } ]
+  }
+}
+```
+
+---
+
+### `POST /admin/users/:id/suspend`
+Suspends a user account. The user will be blocked from logging in.
+
+**Request Body (optional):**
+```json
+{
+  "reason": "Suspicious activity detected"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "User suspended." }
+}
+```
+
+---
+
+### `POST /admin/users/:id/reinstate`
+Reinstates a previously suspended user account.
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "User reinstated." }
+}
+```
+
+---
+
+## Admin — KYC Management
+
+### `GET /admin/kyc`
+Lists all KYC submissions across the platform with pagination.
+
+**Query Params:**
+- `page` (default: 1)
+- `limit` (default: 20)
+- `status`: `pending` | `verified` | `rejected`
+
+---
+
+### `POST /admin/kyc/:id/approve`
+Approves a KYC submission. Updates the user's `kyc_status` to `verified`. Sends approval email.
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "KYC approved." }
+}
+```
+
+---
+
+### `POST /admin/kyc/:id/reject`
+Rejects a KYC submission with a reason. Updates user `kyc_status` to `rejected`. Sends rejection email.
+
+**Request Body:**
+```json
+{
+  "reason": "Document is blurry and unreadable."
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "KYC rejected." }
+}
+```
+
+---
+
+## Admin — Deposit Management
+
+### `GET /admin/deposits`
+Lists all deposits across the platform.
+
+**Query Params:**
+- `page`, `limit`
+- `status`: `initiated` | `pending_review` | `completed` | `failed` | `expired` | `rejected`
+- `currency`: `NGN` | `GBP` | `USD` | `CAD`
+
+---
+
+### `POST /admin/deposits/:id/approve`
+Approves a pending manual deposit. Credits the user's wallet atomically.
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Deposit approved and wallet credited." }
+}
+```
+
+---
+
+### `POST /admin/deposits/:id/reject`
+Rejects a pending deposit with a reason. Sends rejection email to the user.
+
+**Request Body:**
+```json
+{
+  "reason": "Proof of payment does not match the claimed amount."
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Deposit rejected." }
+}
+```
+
+---
+
+### `POST /admin/deposits/:id/verify-flutterwave`
+Manually triggers a Flutterwave deposit verification (for stuck/missed webhooks).
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Deposit verified via Flutterwave." }
+}
+```
+
+---
+
+## Admin — Analytics & Reporting
+
+### `GET /admin/dashboard`
+Returns platform-wide summary statistics for the admin dashboard.
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "users": {
+      "total": "150",
+      "active": "140",
+      "suspended": "10"
+    },
+    "kyc": {
+      "total": "80",
+      "pending": "15",
+      "verified": "60",
+      "rejected": "5"
+    },
+    "pendingDeposits": [ { ... } ],
+    "recentKyc": [ { ... } ],
+    "charts": {
+      "kycSubmissions": [
+        { "label": "Mon", "value": "5" },
+        { "label": "Tue", "value": "8" }
+      ],
+      "deposits": [
+        { "label": "Mon", "value": "2" }
+      ]
+    }
+  }
+}
+```
+
+---
+
+### `GET /admin/analytics/impact`
+Returns platform impact metrics (trade volume, conversion totals, user growth, etc.).
+
+**Auth required:** Yes (Admin)
+
+---
+
+### `GET /admin/trades`
+Lists all trades across the platform.
+
+**Query Params:**
+- `page` (default: 1)
+- `limit` (default: 20)
+- `status`: any trade status
+
+---
+
+### `GET /admin/disputes`
+Lists all disputes across the platform.
+
+**Query Params:**
+- `page`, `limit`
+- `status`: `open` | `resolved` | `closed`
+
+---
+
+### `GET /admin/transactions`
+Lists all ledger transactions across the platform.
+
+**Query Params:**
+- `page`, `limit`
+
+---
+
+### `GET /admin/logs`
+Lists the admin action audit trail (`admin_logs` table).
+
+**Query Params:**
+- `page`, `limit`
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "logs": [
+      {
+        "id": "uuid",
+        "admin_id": "uuid",
+        "action": "approve_kyc",
+        "target_type": "kyc",
+        "target_id": "uuid",
+        "details": { ... },
+        "created_at": "2026-04-03T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+## Admin — Admin Management
+
+These routes require **Super Admin** role.
+
+### `GET /admin/admins`
+Lists all admin and super_admin accounts.
+
+---
+
+### `POST /admin/invites`
+Invites a new admin by email. Sends an invite link with a signed token.
+
+**Rate Limit:** 20 requests per hour
+
+**Request Body:**
+```json
+{
+  "email": "newadmin@sabofinance.com",
+  "role": "admin"
+}
+```
+
+**Response `201`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Invite sent to newadmin@sabofinance.com" }
+}
+```
+
+---
+
+### `POST /admin/admins/:id/remove`
+Removes an admin's admin role (downgrades to user role).
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Admin removed." }
+}
+```
+
+---
+
+### `POST /admin/admins/:id/upgrade`
+Upgrades an admin to super_admin role.
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Admin upgraded to super_admin." }
+}
+```
+
+---
+
+### `GET /admin/profile`
+Returns the authenticated admin's own profile.
+
+---
+
+### `POST /admin/profile/picture`
+Uploads a profile picture for the admin.
+
+**Request:** `multipart/form-data`
+- `file`: image (max 10MB)
 
 ---
 
 ## Webhooks
 
-### Endpoint
-`POST /webhooks/flutterwave`
+### `POST /webhooks/flutterwave`
+Receives and processes Flutterwave payment webhooks. Only processes `charge.completed` events. Validates the `verif-hash` header against `FLUTTERWAVE_WEBHOOK_HASH`. Idempotent — duplicate events are safely ignored.
 
-### Description
-Processes Flutterwave webhook events (only `charge.completed`).
+**Auth required:** No (header-based HMAC validation)
 
-### Headers
-- `verif-hash`: Flutterwave webhook hash
+**Headers:**
+```
+verif-hash: <FLUTTERWAVE_WEBHOOK_HASH>
+```
 
+**Request Body (from Flutterwave):**
+```json
+{
+  "event": "charge.completed",
+  "data": {
+    "tx_ref": "DEP-2026-0001",
+    "status": "successful",
+    "amount": 5000,
+    "currency": "NGN"
+  }
+}
+```
 
+**Response `200`:**
+```json
+{ "received": true }
+```
+
+---
+
+## Health Check
+
+### `GET /health`
+Returns the current health status of the API server.
+
+**Auth required:** No
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "status": "ok" },
+  "meta": {},
+  "error": null
+}
+```
+
+---
+
+## Reference Formats
+
+| Scope | Format | Example |
+|-------|--------|---------|
+| Deposit | `DEP-{YEAR}-{SEQ}` | `DEP-2026-0001` |
+| Trade | `TXN-{YEAR}-{SEQ}` | `TXN-2026-0042` |
+| Withdrawal | `WDR-{YEAR}-{SEQ}` | `WDR-2026-0007` |
+| Bid | `BID-{YEAR}-{SEQ}` | `BID-2026-0003` |
+
+Sequences are generated atomically via the `reference_sequences` table to prevent duplicates under concurrent load.
+
+---
+
+## Supported Currencies
+
+| Code | Name | Notes |
+|------|------|-------|
+| `NGN` | Nigerian Naira | Deposits via Flutterwave; base currency for all trades |
+| `GBP` | British Pound | Manual deposit with proof of payment |
+| `USD` | US Dollar | Manual deposit with proof of payment |
+| `CAD` | Canadian Dollar | Manual deposit with proof of payment |

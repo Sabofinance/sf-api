@@ -11,6 +11,8 @@ const listSchema = z.object({
   to: z.string().datetime().optional(),
   type: z.nativeEnum(LedgerType).optional(),
   currency: z.nativeEnum(Currency).optional(),
+  page: z.string().optional().default('1'),
+  limit: z.string().optional().default('20'),
 });
 
 /**
@@ -35,6 +37,12 @@ const listSchema = z.object({
  *       - in: query
  *         name: currency
  *         schema: { $ref: "#/components/schemas/Currency" }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
  *     responses:
  *       200:
  *         description: OK
@@ -45,35 +53,37 @@ const listSchema = z.object({
 export async function listLedger(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
   const q = listSchema.parse(req.query);
+  const pageNum = parseInt(q.page);
+  const limitNum = parseInt(q.limit);
+  const offset = (pageNum - 1) * limitNum;
 
-  const entries = await withTransaction(async (qr) => {
+  const result = await withTransaction(async (qr) => {
     const where: string[] = ['"user_id" = $1'];
-    const args: any[] = [req.user!.id];
+    const args: unknown[] = [req.user!.id];
     let idx = 2;
-    if (q.from) {
-      where.push(`"created_at" >= $${idx++}`);
-      args.push(q.from);
-    }
-    if (q.to) {
-      where.push(`"created_at" <= $${idx++}`);
-      args.push(q.to);
-    }
-    if (q.type) {
-      where.push(`"type" = $${idx++}`);
-      args.push(q.type);
-    }
-    if (q.currency) {
-      where.push(`"currency" = $${idx++}`);
-      args.push(q.currency);
-    }
 
-    return (await qr.query(
-      `SELECT * FROM "ledger" WHERE ${where.join(' AND ')} ORDER BY "created_at" DESC LIMIT 200`,
+    if (q.from) { where.push(`"created_at" >= $${idx++}`); args.push(q.from); }
+    if (q.to)   { where.push(`"created_at" <= $${idx++}`); args.push(q.to); }
+    if (q.type) { where.push(`"type" = $${idx++}`);        args.push(q.type); }
+    if (q.currency) { where.push(`"currency" = $${idx++}`); args.push(q.currency); }
+
+    const whereClause = where.join(' AND ');
+
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "ledger" WHERE ${whereClause}`,
+      args,
+    )) as [{ total: string }];
+
+    args.push(limitNum, offset);
+    const entries = (await qr.query(
+      `SELECT * FROM "ledger" WHERE ${whereClause} ORDER BY "created_at" DESC LIMIT $${idx} OFFSET $${idx + 1}`,
       args,
     )) as Array<Record<string, unknown>>;
+
+    return { entries, total: parseInt(total) };
   });
 
-  return ok(res, { entries });
+  return ok(res, { entries: result.entries, total: result.total, page: pageNum, limit: limitNum });
 }
 
 /**
@@ -88,6 +98,12 @@ export async function listLedger(req: Request, res: Response) {
  *         name: walletId
  *         required: true
  *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 20 }
  *     responses:
  *       200:
  *         description: OK
@@ -98,17 +114,30 @@ export async function listLedger(req: Request, res: Response) {
 export async function listLedgerByWallet(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
   const walletId = z.string().uuid().parse(req.params.walletId);
+  const { page, limit } = z.object({
+    page: z.string().optional().default('1'),
+    limit: z.string().optional().default('20'),
+  }).parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
 
-  const entries = await withTransaction(async (qr) => {
-    return (await qr.query(
+  const result = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "ledger" l JOIN "wallets" w ON w."id" = l."wallet_id" WHERE l."wallet_id" = $1 AND w."user_id" = $2`,
+      [walletId, req.user!.id],
+    )) as [{ total: string }];
+
+    const entries = (await qr.query(
       `SELECT l.* FROM "ledger" l
        JOIN "wallets" w ON w."id" = l."wallet_id"
        WHERE l."wallet_id" = $1 AND w."user_id" = $2
-       ORDER BY l."created_at" DESC LIMIT 200`,
-      [walletId, req.user!.id],
+       ORDER BY l."created_at" DESC LIMIT $3 OFFSET $4`,
+      [walletId, req.user!.id, limitNum, offset],
     )) as Array<Record<string, unknown>>;
+
+    return { entries, total: parseInt(total) };
   });
 
-  return ok(res, { entries });
+  return ok(res, { entries: result.entries, total: result.total, page: pageNum, limit: limitNum });
 }
-

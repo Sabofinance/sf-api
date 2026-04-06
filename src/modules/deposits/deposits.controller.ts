@@ -156,7 +156,7 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
         reference: dep.reference,
       });
 
-      await qr.query(`UPDATE "deposits" SET "status" = $1, "provider_reference" = $2 WHERE "id" = $3`, [
+      await qr.query(`UPDATE "deposits" SET "status" = $1, "provider_reference" = $2, "reviewed_at" = NOW() WHERE "id" = $3`, [
         DepositStatus.completed,
         String(data?.id ?? dep.provider_reference ?? dep.reference),
         dep.id,
@@ -209,14 +209,33 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
  *           application/json:
  *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
+const paginationSchema = z.object({
+  page: z.string().optional().default('1'),
+  limit: z.string().optional().default('20'),
+});
+
 export async function listDeposits(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
-  const deposits = await withTransaction(async (qr) => {
-    return (await qr.query(`SELECT * FROM "deposits" WHERE "user_id" = $1 ORDER BY "created_at" DESC LIMIT 200`, [
-      req.user!.id,
-    ])) as Array<Record<string, unknown>>;
+  const { page, limit } = paginationSchema.parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const result = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "deposits" WHERE "user_id" = $1`,
+      [req.user!.id],
+    )) as [{ total: string }];
+
+    const deposits = (await qr.query(
+      `SELECT * FROM "deposits" WHERE "user_id" = $1 ORDER BY "created_at" DESC LIMIT $2 OFFSET $3`,
+      [req.user!.id, limitNum, offset],
+    )) as Array<Record<string, unknown>>;
+
+    return { deposits, total: parseInt(total) };
   });
-  return ok(res, { deposits });
+
+  return ok(res, { deposits: result.deposits, total: result.total, page: pageNum, limit: limitNum });
 }
 
 /**

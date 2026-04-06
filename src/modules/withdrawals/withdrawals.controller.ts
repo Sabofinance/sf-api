@@ -6,15 +6,17 @@ import { Withdrawal } from '../../database/entities/Withdrawal';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
 import { NotificationService } from '../../services/notificationService';
+import { requirePinSet, verifyPin } from '../../services/pinService';
 import { nextReference } from '../../services/referenceService';
 import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
 import { LedgerType, NotificationType } from '../../utils/enums';
-import { NotFoundError, UnauthorizedError } from '../../utils/errors';
+import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 
 const requestSchema = z.object({
   beneficiary_id: z.string().uuid(),
   amount: z.string().regex(/^\d+(\.\d{1,2})?$/),
+  pin: z.string().length(6).regex(/^\d{6}$/, 'PIN must be 6 digits'),
 });
 
 const idSchema = z.object({ id: z.string().uuid() });
@@ -32,10 +34,11 @@ const idSchema = z.object({ id: z.string().uuid() });
  *         application/json:
  *           schema:
  *             type: object
- *             required: [beneficiary_id, amount]
+ *             required: [beneficiary_id, amount, pin]
  *             properties:
  *               beneficiary_id: { type: string, format: "uuid" }
  *               amount: { type: string, example: "10000.00" }
+ *               pin: { type: string, example: "123456" }
  *     responses:
  *       201:
  *         description: Created
@@ -50,6 +53,12 @@ export async function requestWithdrawal(req: Request, res: Response) {
   const walletService = new WalletService();
 
   const withdrawal = await withTransaction(async (qr) => {
+    await requirePinSet(req.user!.id, qr);
+    const pinValid = await verifyPin(req.user!.id, input.pin, qr);
+    if (!pinValid) {
+      throw new AppError('INVALID_PIN', 'The transaction PIN you entered is incorrect.', 401);
+    }
+
     const beneficiaryRows = (await qr.query(
       `SELECT "id", "currency" FROM "beneficiaries" WHERE "id" = $1 AND "user_id" = $2`,
       [input.beneficiary_id, req.user!.id],
@@ -124,15 +133,33 @@ export async function requestWithdrawal(req: Request, res: Response) {
  *           application/json:
  *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
+const paginationSchema = z.object({
+  page: z.string().optional().default('1'),
+  limit: z.string().optional().default('20'),
+});
+
 export async function listWithdrawals(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
-  const withdrawals = await withTransaction(async (qr) => {
-    return (await qr.query(
-      `SELECT * FROM "withdrawals" WHERE "user_id" = $1 ORDER BY "created_at" DESC`,
+  const { page, limit } = paginationSchema.parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const result = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "withdrawals" WHERE "user_id" = $1`,
       [req.user!.id],
+    )) as [{ total: string }];
+
+    const withdrawals = (await qr.query(
+      `SELECT * FROM "withdrawals" WHERE "user_id" = $1 ORDER BY "created_at" DESC LIMIT $2 OFFSET $3`,
+      [req.user!.id, limitNum, offset],
     )) as Withdrawal[];
+
+    return { withdrawals, total: parseInt(total) };
   });
-  return ok(res, { withdrawals });
+
+  return ok(res, { withdrawals: result.withdrawals, total: result.total, page: pageNum, limit: limitNum });
 }
 
 /**

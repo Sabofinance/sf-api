@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { withTransaction } from '../../database/transaction';
 import { created, ok } from '../../utils/apiResponse';
 import { Currency } from '../../utils/enums';
-import { NotFoundError, UnauthorizedError } from '../../utils/errors';
+import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 
 const createSchema = z.object({
   currency: z.nativeEnum(Currency),
@@ -84,14 +84,33 @@ export async function createBeneficiary(req: Request, res: Response) {
  *           application/json:
  *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
+const paginationSchema = z.object({
+  page: z.string().optional().default('1'),
+  limit: z.string().optional().default('50'),
+});
+
 export async function listBeneficiaries(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
-  const beneficiaries = await withTransaction(async (qr) => {
-    return (await qr.query(`SELECT * FROM "beneficiaries" WHERE "user_id" = $1 ORDER BY "created_at" DESC`, [
-      req.user!.id,
-    ])) as Array<Record<string, unknown>>;
+  const { page, limit } = paginationSchema.parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const result = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "beneficiaries" WHERE "user_id" = $1`,
+      [req.user!.id],
+    )) as [{ total: string }];
+
+    const beneficiaries = (await qr.query(
+      `SELECT * FROM "beneficiaries" WHERE "user_id" = $1 ORDER BY "is_default" DESC, "created_at" DESC LIMIT $2 OFFSET $3`,
+      [req.user!.id, limitNum, offset],
+    )) as Array<Record<string, unknown>>;
+
+    return { beneficiaries, total: parseInt(total) };
   });
-  return ok(res, { beneficiaries });
+
+  return ok(res, { beneficiaries: result.beneficiaries, total: result.total, page: pageNum, limit: limitNum });
 }
 
 /**
@@ -118,14 +137,66 @@ export async function deleteBeneficiary(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
 
   await withTransaction(async (qr) => {
-    const result = await qr.query(`DELETE FROM "beneficiaries" WHERE "id" = $1 AND "user_id" = $2`, [
-      id,
-      req.user!.id,
-    ]);
-    if (result[1] === 0) {
+    const rows = (await qr.query(
+      `DELETE FROM "beneficiaries" WHERE "id" = $1 AND "user_id" = $2 RETURNING id`,
+      [id, req.user!.id],
+    )) as Array<{ id: string }>;
+    if (rows.length === 0) {
       throw new NotFoundError('No beneficiary matches that ID on your account.', 'BENEFICIARY_NOT_FOUND');
     }
   });
 
   return ok(res, { message: 'Beneficiary deleted successfully' });
+}
+
+/**
+ * @swagger
+ * /beneficiaries/{id}/set-default:
+ *   put:
+ *     summary: Set a beneficiary as the default for its currency
+ *     tags: [Beneficiaries]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ */
+export async function setDefaultBeneficiary(req: Request, res: Response) {
+  if (!req.user) throw new UnauthorizedError();
+  const { id } = idSchema.parse(req.params);
+
+  const beneficiary = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT id, currency FROM "beneficiaries" WHERE "id" = $1 AND "user_id" = $2`,
+      [id, req.user!.id],
+    )) as Array<{ id: string; currency: string }>;
+
+    if (rows.length === 0) {
+      throw new NotFoundError('No beneficiary matches that ID on your account.', 'BENEFICIARY_NOT_FOUND');
+    }
+
+    const target = rows[0];
+
+    // Unset any existing default for this currency
+    await qr.query(
+      `UPDATE "beneficiaries" SET "is_default" = false WHERE "user_id" = $1 AND "currency" = $2 AND "is_default" = true`,
+      [req.user!.id, target.currency],
+    );
+
+    const updated = (await qr.query(
+      `UPDATE "beneficiaries" SET "is_default" = true WHERE "id" = $1 RETURNING *`,
+      [id],
+    )) as Array<Record<string, unknown>>;
+
+    return updated[0];
+  });
+
+  return ok(res, { beneficiary });
 }

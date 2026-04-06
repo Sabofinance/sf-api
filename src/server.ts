@@ -4,6 +4,7 @@ import { AppDataSource } from './database/data-source';
 import './jobs/pinExpiryJob'; // Initialize background jobs
 import './jobs/bidExpiryJob';
 import './jobs/depositExpiryJob';
+import './jobs/fx-rate-sync.queue';
 
 async function bootstrap() {
   const app = createApp();

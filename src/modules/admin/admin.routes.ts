@@ -32,9 +32,11 @@ import {
   getImpactAnalytics,
   listAllDeposits,
   listAllDisputes,
+  resolveDispute,
   listAllTransactions,
   listAllTrades,
   verifyFlutterwaveDeposit,
+  getMetricsAnalytics,
 } from './admin.controller';
 
 export const adminRouter = Router();
@@ -84,8 +86,10 @@ adminRouter.post('/deposits/:id/verify-flutterwave', asyncHandler(verifyFlutterw
 // Dashboard & Analytics
 adminRouter.get('/dashboard', asyncHandler(getDashboardStats));
 adminRouter.get('/analytics/impact', asyncHandler(getImpactAnalytics));
+adminRouter.get('/analytics/metrics', asyncHandler(getMetricsAnalytics));
 adminRouter.get('/deposits', asyncHandler(listAllDeposits));
 adminRouter.get('/trades', asyncHandler(listAllTrades));
 adminRouter.get('/disputes', asyncHandler(listAllDisputes));
+adminRouter.post('/disputes/:id/resolve', asyncHandler(resolveDispute));
 adminRouter.get('/transactions', asyncHandler(listAllTransactions));
 
