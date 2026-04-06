@@ -13,13 +13,24 @@ import { Kyc } from '../../database/entities/Kyc';
 import { Sabit } from '../../database/entities/Sabit';
 import { Trade } from '../../database/entities/Trade';
 import { User } from '../../database/entities/User';
+import { Withdrawal } from '../../database/entities/Withdrawal';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
 import { NotificationService } from '../../services/notificationService';
 import { generateUsername } from '../../services/usernameService';
 import { WalletService } from '../../services/walletService';
 import { ok } from '../../utils/apiResponse';
-import { Currency, DepositStatus, DisputeStatus, KycStatus, LedgerType, NotificationType, TradeStatus, UserRole } from '../../utils/enums';
+import {
+  Currency,
+  DepositStatus,
+  DisputeStatus,
+  KycStatus,
+  LedgerType,
+  NotificationType,
+  TradeStatus,
+  UserRole,
+  WithdrawalStatus,
+} from '../../utils/enums';
 import { AppError, NotFoundError } from '../../utils/errors';
 
 const loginSchema = z.object({
@@ -32,13 +43,37 @@ const verifyOtpSchema = z.object({
   otp: z.string().length(6),
 });
 
-function signAdminAccessToken(user: { id: string; name: string; email: string; role: UserRole; kyc_status: string }) {
-  const payload = { id: user.id, name: user.name, email: user.email, role: user.role, kyc_status: user.kyc_status };
+function signAdminAccessToken(user: {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  kyc_status: string;
+}) {
+  const payload = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    kyc_status: user.kyc_status,
+  };
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: '8h' });
 }
 
-function signAdminRefreshToken(user: { id: string; name: string; email: string; role: UserRole; kyc_status: string }) {
-  const payload = { id: user.id, name: user.name, email: user.email, role: user.role, kyc_status: user.kyc_status };
+function signAdminRefreshToken(user: {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  kyc_status: string;
+}) {
+  const payload = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    kyc_status: user.kyc_status,
+  };
   return jwt.sign(payload, env.JWT_REFRESH_SECRET, { expiresIn: '30d' });
 }
 
@@ -69,16 +104,27 @@ export async function adminLogin(req: Request, res: Response) {
     const rows = (await qr.query(
       `SELECT "id","password_hash","role","email","name","kyc_status","is_suspended","deleted_at" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) LIMIT 1`,
       [input.email.toLowerCase(), UserRole.admin, UserRole.super_admin],
-    )) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; is_suspended: boolean; deleted_at: Date | null; }>;
+    )) as Array<{
+      id: string;
+      password_hash: string;
+      role: UserRole;
+      email: string;
+      name: string;
+      kyc_status: string;
+      is_suspended: boolean;
+      deleted_at: Date | null;
+    }>;
     return rows[0];
   });
 
-  if (!user) throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email or password.', 401);
+  if (!user)
+    throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email or password.', 401);
   if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
   if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
 
   const okPass = await bcrypt.compare(input.password, user.password_hash);
-  if (!okPass) throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email or password.', 401);
+  if (!okPass)
+    throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email or password.', 401);
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
@@ -127,13 +173,25 @@ export async function adminVerifyOtp(req: Request, res: Response) {
     const rows = (await qr.query(
       'SELECT "id", "name", "email", "role", "kyc_status", "is_suspended", "deleted_at" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) AND "otp" = $4 AND "otp_purpose" = $5 AND "otp_expires" > NOW() LIMIT 1',
       [input.email.toLowerCase(), UserRole.admin, UserRole.super_admin, input.otp, 'admin-login'],
-    )) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string; is_suspended: boolean; deleted_at: Date | null }>;
+    )) as Array<{
+      id: string;
+      name: string;
+      email: string;
+      role: UserRole;
+      kyc_status: string;
+      is_suspended: boolean;
+      deleted_at: Date | null;
+    }>;
 
     return rows[0];
   });
 
   if (!user) {
-    throw new AppError('INVALID_OTP', 'That admin sign-in code is incorrect or has expired. Request a new OTP.', 400);
+    throw new AppError(
+      'INVALID_OTP',
+      'That admin sign-in code is incorrect or has expired. Request a new OTP.',
+      400,
+    );
   }
   if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
   if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
@@ -148,9 +206,9 @@ export async function adminVerifyOtp(req: Request, res: Response) {
   const accessToken = signAdminAccessToken(user);
   const refreshToken = signAdminRefreshToken(user);
 
-  return ok(res, { 
+  return ok(res, {
     tokens: { accessToken, refreshToken },
-    user: { id: user.id, name: user.name, email: user.email, role: user.role }
+    user: { id: user.id, name: user.name, email: user.email, role: user.role },
   });
 }
 
@@ -187,13 +245,21 @@ const rejectKycSchema = z.object({
  */
 export async function listUsers(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
-  const users = await withTransaction(async (qr) => {
-    return (await qr.query(`SELECT * FROM "users" ORDER BY "created_at" DESC LIMIT $1 OFFSET $2`, [
-      limit,
-      (parseInt(page) - 1) * parseInt(limit),
-    ])) as User[];
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const { users, total } = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query('SELECT COUNT(*) as total FROM "users"')) as [
+      { total: string },
+    ];
+    const users = (await qr.query(
+      `SELECT * FROM "users" ORDER BY "created_at" DESC LIMIT $1 OFFSET $2`,
+      [limitNum, offset],
+    )) as User[];
+    return { users, total: parseInt(total) };
   });
-  return ok(res, { users });
+  return ok(res, { items: users, total, page: pageNum, limit: limitNum });
 }
 
 /**
@@ -219,7 +285,8 @@ export async function getUser(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
   const user = await withTransaction(async (qr) => {
     const userRows = (await qr.query(`SELECT * FROM "users" WHERE "id" = $1`, [id])) as User[];
-    if (userRows.length === 0) throw new NotFoundError('No user exists with that ID.', 'USER_NOT_FOUND');
+    if (userRows.length === 0)
+      throw new NotFoundError('No user exists with that ID.', 'USER_NOT_FOUND');
     const wallets = await qr.query(`SELECT * FROM "wallets" WHERE "user_id" = $1`, [id]);
     return { ...userRows[0], wallets };
   });
@@ -249,7 +316,7 @@ export async function suspendUser(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
   await withTransaction(async (qr) => {
     await qr.query(`UPDATE "users" SET "is_suspended" = true WHERE "id" = $1`, [id]);
-    
+
     const notificationService = new NotificationService();
     await notificationService.createNotification({
       queryRunner: qr,
@@ -321,8 +388,15 @@ export async function reinstateUser(req: Request, res: Response) {
  */
 export async function listKycSubmissions(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
-  const submissions = await withTransaction(async (qr) => {
-    return (await qr.query(
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const { submissions, total } = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query('SELECT COUNT(*) as total FROM "kyc"')) as [
+      { total: string },
+    ];
+    const submissions = (await qr.query(
       `SELECT 
         k.*, 
         u.name, 
@@ -334,10 +408,19 @@ export async function listKycSubmissions(req: Request, res: Response) {
       JOIN "users" u ON k.user_id = u.id 
       ORDER BY k.created_at DESC 
       LIMIT $1 OFFSET $2`,
-      [limit, (parseInt(page) - 1) * parseInt(limit)],
-    )) as Array<Kyc & { name: string; username: string; email: string; phone: string; profile_picture_url: string | null }>;
+      [limitNum, offset],
+    )) as Array<
+      Kyc & {
+        name: string;
+        username: string;
+        email: string;
+        phone: string;
+        profile_picture_url: string | null;
+      }
+    >;
+    return { submissions, total: parseInt(total) };
   });
-  return ok(res, { submissions });
+  return ok(res, { items: submissions, total, page: pageNum, limit: limitNum });
 }
 
 /**
@@ -362,16 +445,20 @@ export async function listKycSubmissions(req: Request, res: Response) {
 export async function approveKyc(req: Request, res: Response) {
   const { id } = idSchema.parse(req.params);
   await withTransaction(async (qr) => {
-    const kycRows = (await qr.query(`SELECT * FROM "kyc" WHERE "id" = $1 FOR UPDATE`, [id])) as Kyc[];
+    const kycRows = (await qr.query(`SELECT * FROM "kyc" WHERE "id" = $1 FOR UPDATE`, [
+      id,
+    ])) as Kyc[];
     const kyc = kycRows[0];
     if (!kyc) throw new NotFoundError('KYC submission not found');
 
-    await qr.query(`UPDATE "kyc" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`, [
+    await qr.query(
+      `UPDATE "kyc" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`,
+      [KycStatus.verified, req.user!.id, id],
+    );
+    await qr.query(`UPDATE "users" SET "kyc_status" = $1 WHERE "id" = $2`, [
       KycStatus.verified,
-      req.user!.id,
-      id,
+      kyc.user_id,
     ]);
-    await qr.query(`UPDATE "users" SET "kyc_status" = $1 WHERE "id" = $2`, [KycStatus.verified, kyc.user_id]);
 
     const notificationService = new NotificationService();
     await notificationService.createNotification({
@@ -383,7 +470,9 @@ export async function approveKyc(req: Request, res: Response) {
       relatedId: id,
     });
 
-    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [kyc.user_id])) as User[];
+    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [
+      kyc.user_id,
+    ])) as User[];
     await sendEmail({
       to: user[0].email,
       subject: 'KYC Approved',
@@ -432,17 +521,20 @@ export async function rejectKyc(req: Request, res: Response) {
   const { reason } = rejectKycSchema.parse(req.body);
 
   await withTransaction(async (qr) => {
-    const kycRows = (await qr.query(`SELECT * FROM "kyc" WHERE "id" = $1 FOR UPDATE`, [id])) as Kyc[];
+    const kycRows = (await qr.query(`SELECT * FROM "kyc" WHERE "id" = $1 FOR UPDATE`, [
+      id,
+    ])) as Kyc[];
     const kyc = kycRows[0];
     if (!kyc) throw new NotFoundError('KYC submission not found');
 
-    await qr.query(`UPDATE "kyc" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3, "reviewed_at" = NOW() WHERE "id" = $4`, [
+    await qr.query(
+      `UPDATE "kyc" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3, "reviewed_at" = NOW() WHERE "id" = $4`,
+      [KycStatus.rejected, reason, req.user!.id, id],
+    );
+    await qr.query(`UPDATE "users" SET "kyc_status" = $1 WHERE "id" = $2`, [
       KycStatus.rejected,
-      reason,
-      req.user!.id,
-      id,
+      kyc.user_id,
     ]);
-    await qr.query(`UPDATE "users" SET "kyc_status" = $1 WHERE "id" = $2`, [KycStatus.rejected, kyc.user_id]);
 
     const notificationService = new NotificationService();
     await notificationService.createNotification({
@@ -454,7 +546,9 @@ export async function rejectKyc(req: Request, res: Response) {
       relatedId: id,
     });
 
-    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [kyc.user_id])) as User[];
+    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [
+      kyc.user_id,
+    ])) as User[];
     await sendEmail({
       to: user[0].email,
       subject: 'KYC Rejected',
@@ -495,7 +589,9 @@ export async function approveDeposit(req: Request, res: Response) {
 
   const walletService = new WalletService();
   const deposit = await withTransaction(async (qr) => {
-    const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [id])) as Deposit[];
+    const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [
+      id,
+    ])) as Deposit[];
     const dep = rows[0];
     if (!dep) throw new NotFoundError('Deposit not found');
 
@@ -517,11 +613,10 @@ export async function approveDeposit(req: Request, res: Response) {
       reference: dep.reference,
     });
 
-    await qr.query(`UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`, [
-      DepositStatus.completed,
-      req.user!.id,
-      dep.id,
-    ]);
+    await qr.query(
+      `UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`,
+      [DepositStatus.completed, req.user!.id, dep.id],
+    );
 
     const notificationService = new NotificationService();
     await notificationService.createNotification({
@@ -533,9 +628,13 @@ export async function approveDeposit(req: Request, res: Response) {
       relatedId: dep.id,
     });
 
-    const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [dep.id])) as Deposit[];
+    const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [
+      dep.id,
+    ])) as Deposit[];
 
-    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [dep.user_id])) as User[];
+    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [
+      dep.user_id,
+    ])) as User[];
     await sendEmail({
       to: user[0].email,
       subject: 'Deposit Confirmed',
@@ -552,6 +651,145 @@ export async function approveDeposit(req: Request, res: Response) {
   });
 
   return ok(res, { deposit });
+}
+
+export async function listAllWithdrawals(req: Request, res: Response) {
+  const { page, limit } = paginationSchema.parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const { withdrawals, total } = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query('SELECT COUNT(*) as total FROM "withdrawals"')) as [
+      { total: string },
+    ];
+    const withdrawals = (await qr.query(
+      `SELECT w.*, u.name as user_name, u.email as user_email, b.bank_name, b.account_name, b.account_number, b.sort_code, b.iban
+       FROM "withdrawals" w
+       JOIN "users" u ON w.user_id = u.id
+       JOIN "beneficiaries" b ON w.beneficiary_id = b.id
+       ORDER BY w.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limitNum, offset],
+    )) as Array<Record<string, unknown>>;
+    return { withdrawals, total: parseInt(total) };
+  });
+  return ok(res, { items: withdrawals, total, page: pageNum, limit: limitNum });
+}
+
+export async function approveWithdrawal(req: Request, res: Response) {
+  const { id } = idSchema.parse(req.params);
+
+  const withdrawal = await withTransaction(async (qr) => {
+    const rows = (await qr.query(`SELECT * FROM "withdrawals" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [
+      id,
+    ])) as Withdrawal[];
+    const wdr = rows[0];
+    if (!wdr) throw new NotFoundError('Withdrawal not found');
+
+    if (wdr.status === WithdrawalStatus.completed) return wdr;
+    if (wdr.status !== WithdrawalStatus.requested && wdr.status !== WithdrawalStatus.processing) {
+      throw new AppError(
+        'INVALID_STATUS',
+        'Withdrawal is not in a state that can be approved',
+        400,
+      );
+    }
+
+    await qr.query(
+      `UPDATE "withdrawals" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`,
+      [WithdrawalStatus.completed, req.user!.id, id],
+    );
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: wdr.user_id,
+      title: 'Withdrawal Completed',
+      message: `Your withdrawal of ${wdr.amount} ${wdr.currency} has been processed and sent to your bank.`,
+      type: NotificationType.success,
+      relatedId: id,
+    });
+
+    const updated = (await qr.query(`SELECT * FROM "withdrawals" WHERE "id" = $1 LIMIT 1`, [
+      id,
+    ])) as Withdrawal[];
+
+    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [
+      wdr.user_id,
+    ])) as User[];
+    await sendEmail({
+      to: user[0].email,
+      subject: 'Withdrawal Completed',
+      template: 'withdrawal-update',
+      context: {
+        name: user[0].name,
+        amount: wdr.amount,
+        currency: wdr.currency,
+        status: 'Completed',
+        reference: wdr.reference,
+      },
+    });
+
+    return updated[0];
+  });
+
+  return ok(res, { withdrawal });
+}
+
+export async function rejectWithdrawal(req: Request, res: Response) {
+  const { id } = idSchema.parse(req.params);
+  const { reason } = z.object({ reason: z.string().min(5) }).parse(req.body);
+
+  const walletService = new WalletService();
+  const withdrawal = await withTransaction(async (qr) => {
+    const rows = (await qr.query(`SELECT * FROM "withdrawals" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [
+      id,
+    ])) as Withdrawal[];
+    const wdr = rows[0];
+    if (!wdr) throw new NotFoundError('Withdrawal not found');
+
+    if (wdr.status === WithdrawalStatus.completed) {
+      throw new AppError('INVALID_STATUS', 'Cannot reject a completed withdrawal', 400);
+    }
+    if (wdr.status === WithdrawalStatus.failed) {
+      throw new AppError('INVALID_STATUS', 'Withdrawal is already failed/rejected', 400);
+    }
+
+    // Refund the user's wallet
+    await walletService.credit({
+      queryRunner: qr,
+      userId: wdr.user_id,
+      currency: wdr.currency,
+      amount: wdr.amount,
+      type: LedgerType.reversal,
+      initiatedBy: req.user!.id,
+      relatedId: wdr.id,
+      reference: `REJ-${wdr.reference}`,
+    });
+
+    await qr.query(
+      `UPDATE "withdrawals" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3, "reviewed_at" = NOW() WHERE "id" = $4`,
+      [WithdrawalStatus.failed, reason, req.user!.id, id],
+    );
+
+    const notificationService = new NotificationService();
+    await notificationService.createNotification({
+      queryRunner: qr,
+      userId: wdr.user_id,
+      title: 'Withdrawal Rejected',
+      message: `Your withdrawal of ${wdr.amount} ${wdr.currency} was rejected. Funds have been returned to your wallet. Reason: ${reason}`,
+      type: NotificationType.error,
+      relatedId: id,
+    });
+
+    const updated = (await qr.query(`SELECT * FROM "withdrawals" WHERE "id" = $1 LIMIT 1`, [
+      id,
+    ])) as Withdrawal[];
+    return updated[0];
+  });
+
+  return ok(res, { withdrawal });
 }
 
 /**
@@ -579,54 +817,85 @@ export async function verifyFlutterwaveDeposit(req: Request, res: Response) {
   const walletService = new WalletService();
 
   const deposit = await withTransaction(async (qr) => {
-    const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [id])) as Deposit[];
+    const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [
+      id,
+    ])) as Deposit[];
     const dep = rows[0];
     if (!dep) throw new NotFoundError('Deposit not found');
 
     if (dep.status === DepositStatus.completed) return dep;
-    
+
     if (dep.status !== DepositStatus.initiated) {
-      throw new AppError('INVALID_STATUS', 'Only initiated deposits can be verified with Flutterwave', 400);
+      throw new AppError(
+        'INVALID_STATUS',
+        'Only initiated deposits can be verified with Flutterwave',
+        400,
+      );
     }
-    
+
     if (dep.currency !== Currency.NGN) {
-      throw new AppError('INVALID_CURRENCY', 'Only NGN deposits can be verified with Flutterwave', 400);
+      throw new AppError(
+        'INVALID_CURRENCY',
+        'Only NGN deposits can be verified with Flutterwave',
+        400,
+      );
     }
 
     // Verify via Flutterwave Verification API
     if (env.FLUTTERWAVE_SECRET) {
       try {
         // Flutterwave has an endpoint to verify transactions by tx_ref
-        const response = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${dep.reference}`, {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${env.FLUTTERWAVE_SECRET}`,
-            'Content-Type': 'application/json',
+        const response = await fetch(
+          `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${dep.reference}`,
+          {
+            method: 'GET',
+            headers: {
+              Authorization: `Bearer ${env.FLUTTERWAVE_SECRET}`,
+              'Content-Type': 'application/json',
+            },
           },
-        });
-        
+        );
+
         const result = await response.json();
-        
+
         if (!response.ok || result.status !== 'success') {
-          throw new AppError('VERIFICATION_FAILED', `Flutterwave Verification Failed: ${result.message || 'Transaction not found or successful'}`, 400);
+          throw new AppError(
+            'VERIFICATION_FAILED',
+            `Flutterwave Verification Failed: ${result.message || 'Transaction not found or successful'}`,
+            400,
+          );
         }
-        
+
         // Ensure the amount and currency match
         if (result.data.status !== 'successful') {
-           throw new AppError('VERIFICATION_FAILED', `Transaction status is ${result.data.status}, expected successful`, 400);
+          throw new AppError(
+            'VERIFICATION_FAILED',
+            `Transaction status is ${result.data.status}, expected successful`,
+            400,
+          );
         }
-        
+
         if (Number(result.data.amount) < Number(dep.amount)) {
-          throw new AppError('VERIFICATION_FAILED', `Amount mismatch. Paid: ${result.data.amount}, Expected: ${dep.amount}`, 400);
+          throw new AppError(
+            'VERIFICATION_FAILED',
+            `Amount mismatch. Paid: ${result.data.amount}, Expected: ${dep.amount}`,
+            400,
+          );
         }
       } catch (error) {
         if (error instanceof AppError) throw error;
-        throw new AppError('VERIFICATION_ERROR', 'Could not verify transaction with Flutterwave', 500);
+        throw new AppError(
+          'VERIFICATION_ERROR',
+          'Could not verify transaction with Flutterwave',
+          500,
+        );
       }
     } else {
       // If no Flutterwave secret is configured (e.g. testing), we'll bypass actual verification
       // and proceed with manual crediting based on admin's trust.
-      console.warn('FLUTTERWAVE_SECRET not found, bypassing actual API verification for manual deposit approval.');
+      console.warn(
+        'FLUTTERWAVE_SECRET not found, bypassing actual API verification for manual deposit approval.',
+      );
     }
 
     await walletService.credit({
@@ -640,11 +909,10 @@ export async function verifyFlutterwaveDeposit(req: Request, res: Response) {
       reference: dep.reference,
     });
 
-    await qr.query(`UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`, [
-      DepositStatus.completed,
-      req.user!.id,
-      dep.id,
-    ]);
+    await qr.query(
+      `UPDATE "deposits" SET "status" = $1, "reviewed_by" = $2, "reviewed_at" = NOW() WHERE "id" = $3`,
+      [DepositStatus.completed, req.user!.id, dep.id],
+    );
 
     const notificationService = new NotificationService();
     await notificationService.createNotification({
@@ -656,9 +924,13 @@ export async function verifyFlutterwaveDeposit(req: Request, res: Response) {
       relatedId: dep.id,
     });
 
-    const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [dep.id])) as Deposit[];
+    const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [
+      dep.id,
+    ])) as Deposit[];
 
-    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [dep.user_id])) as User[];
+    const user = (await qr.query(`SELECT "name", "email" FROM "users" WHERE "id" = $1`, [
+      dep.user_id,
+    ])) as User[];
     await sendEmail({
       to: user[0].email,
       subject: 'Deposit Confirmed',
@@ -819,21 +1091,21 @@ export async function getDashboardStats(req: Request, res: Response) {
       kyc: kycStats[0],
       marketplace: {
         sabits: sabitStats[0],
-        disputes: disputeStats[0]
+        disputes: disputeStats[0],
       },
       financials: {
         depositVolumes,
         withdrawalVolumes,
         tradeVolumes,
-        escrowTVL
+        escrowTVL,
       },
       pendingDeposits,
       recentKyc,
       charts: {
         kycSubmissions: kycChart,
         deposits: depositChart,
-        trades: tradeChart
-      }
+        trades: tradeChart,
+      },
     };
   });
 
@@ -910,7 +1182,7 @@ export async function getImpactAnalytics(req: Request, res: Response) {
       },
       efficiency: {
         adminActions30Days: operationalEfficiency[0].total_admin_actions,
-      }
+      },
     };
   });
 
@@ -933,18 +1205,26 @@ export async function getImpactAnalytics(req: Request, res: Response) {
  */
 export async function listAllTrades(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
-  const trades = await withTransaction(async (qr) => {
-    return (await qr.query(
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const { trades, total } = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query('SELECT COUNT(*) as total FROM "trades"')) as [
+      { total: string },
+    ];
+    const trades = (await qr.query(
       `SELECT t.*, b.name as buyer_name, s.name as seller_name 
        FROM "trades" t 
        JOIN "users" b ON t.buyer_id = b.id 
        JOIN "users" s ON t.seller_id = s.id 
        ORDER BY t.created_at DESC 
        LIMIT $1 OFFSET $2`,
-      [parseInt(limit), (parseInt(page) - 1) * parseInt(limit)],
+      [limitNum, offset],
     )) as Array<Record<string, unknown>>;
+    return { trades, total: parseInt(total) };
   });
-  return ok(res, { trades });
+  return ok(res, { items: trades, total, page: pageNum, limit: limitNum });
 }
 
 /**
@@ -963,17 +1243,25 @@ export async function listAllTrades(req: Request, res: Response) {
  */
 export async function listAllDeposits(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
-  const deposits = await withTransaction(async (qr) => {
-    return (await qr.query(
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const { deposits, total } = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query('SELECT COUNT(*) as total FROM "deposits"')) as [
+      { total: string },
+    ];
+    const deposits = (await qr.query(
       `SELECT d.*, u.name as user_name, u.email as user_email 
        FROM "deposits" d 
        JOIN "users" u ON d.user_id = u.id 
        ORDER BY d.created_at DESC 
        LIMIT $1 OFFSET $2`,
-      [limit, (parseInt(page) - 1) * parseInt(limit)],
+      [limitNum, offset],
     )) as Array<Record<string, unknown>>;
+    return { deposits, total: parseInt(total) };
   });
-  return ok(res, { deposits });
+  return ok(res, { items: deposits, total, page: pageNum, limit: limitNum });
 }
 
 /**
@@ -992,18 +1280,26 @@ export async function listAllDeposits(req: Request, res: Response) {
  */
 export async function listAllDisputes(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
-  const disputes = await withTransaction(async (qr) => {
-    return (await qr.query(
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const { disputes, total } = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query('SELECT COUNT(*) as total FROM "disputes"')) as [
+      { total: string },
+    ];
+    const disputes = (await qr.query(
       `SELECT d.*, t.reference as trade_reference, u.name as raised_by_name 
        FROM "disputes" d 
        JOIN "trades" t ON d.trade_id = t.id 
        JOIN "users" u ON d.raised_by_id = u.id 
        ORDER BY d.created_at DESC 
        LIMIT $1 OFFSET $2`,
-      [limit, (parseInt(page) - 1) * parseInt(limit)],
+      [limitNum, offset],
     )) as Array<Record<string, unknown>>;
+    return { disputes, total: parseInt(total) };
   });
-  return ok(res, { disputes });
+  return ok(res, { items: disputes, total, page: pageNum, limit: limitNum });
 }
 
 const resolveDisputeSchema = z.object({
@@ -1047,22 +1343,24 @@ export async function resolveDispute(req: Request, res: Response) {
   const walletService = new WalletService();
 
   const result = await withTransaction(async (qr) => {
-    const disputeRows = (await qr.query(
-      `SELECT * FROM "disputes" WHERE "id" = $1 FOR UPDATE`,
-      [id],
-    )) as Dispute[];
+    const disputeRows = (await qr.query(`SELECT * FROM "disputes" WHERE "id" = $1 FOR UPDATE`, [
+      id,
+    ])) as Dispute[];
     const dispute = disputeRows[0];
     if (!dispute) throw new NotFoundError('No dispute exists with that ID.', 'DISPUTE_NOT_FOUND');
     if (dispute.status !== DisputeStatus.open) {
       throw new AppError('INVALID_STATUS', 'This dispute has already been resolved.', 400);
     }
 
-    const tradeRows = (await qr.query(
-      `SELECT * FROM "trades" WHERE "id" = $1 FOR UPDATE`,
-      [dispute.trade_id],
-    )) as Trade[];
+    const tradeRows = (await qr.query(`SELECT * FROM "trades" WHERE "id" = $1 FOR UPDATE`, [
+      dispute.trade_id,
+    ])) as Trade[];
     const trade = tradeRows[0];
-    if (!trade) throw new NotFoundError('The trade associated with this dispute no longer exists.', 'TRADE_NOT_FOUND');
+    if (!trade)
+      throw new NotFoundError(
+        'The trade associated with this dispute no longer exists.',
+        'TRADE_NOT_FOUND',
+      );
     if (trade.status !== TradeStatus.disputed) {
       throw new AppError('INVALID_TRADE_STATUS', 'The trade is not in a disputed state.', 400);
     }
@@ -1083,10 +1381,9 @@ export async function resolveDispute(req: Request, res: Response) {
       });
 
       // Restore sabit available amount
-      const sabitRows = (await qr.query(
-        `SELECT * FROM "sabits" WHERE "id" = $1 FOR UPDATE`,
-        [trade.sabit_id],
-      )) as Sabit[];
+      const sabitRows = (await qr.query(`SELECT * FROM "sabits" WHERE "id" = $1 FOR UPDATE`, [
+        trade.sabit_id,
+      ])) as Sabit[];
       if (sabitRows.length > 0) {
         const sabit = sabitRows[0];
         const restored = (parseFloat(sabit.available_amount) + parseFloat(trade.amount)).toFixed(2);
@@ -1097,7 +1394,10 @@ export async function resolveDispute(req: Request, res: Response) {
         );
       }
 
-      await qr.query(`UPDATE "trades" SET "status" = $1 WHERE "id" = $2`, [TradeStatus.cancelled, trade.id]);
+      await qr.query(`UPDATE "trades" SET "status" = $1 WHERE "id" = $2`, [
+        TradeStatus.cancelled,
+        trade.id,
+      ]);
     } else {
       // Seller wins: transfer buyer's locked NGN to seller as compensation
       await walletService.transferFromLocked({
@@ -1112,10 +1412,10 @@ export async function resolveDispute(req: Request, res: Response) {
         reference: `DIS-SET-${refId}`,
       });
 
-      await qr.query(
-        `UPDATE "trades" SET "status" = $1, "completed_at" = NOW() WHERE "id" = $2`,
-        [TradeStatus.completed, trade.id],
-      );
+      await qr.query(`UPDATE "trades" SET "status" = $1, "completed_at" = NOW() WHERE "id" = $2`, [
+        TradeStatus.completed,
+        trade.id,
+      ]);
     }
 
     // Resolve the dispute record
@@ -1128,12 +1428,14 @@ export async function resolveDispute(req: Request, res: Response) {
 
     // Notify both parties
     const notificationService = new NotificationService();
-    const buyerMsg = favor === 'buyer'
-      ? `Your dispute for trade ${trade.reference} was resolved in your favour. Your funds have been returned.`
-      : `The dispute for trade ${trade.reference} was resolved in the seller's favour.`;
-    const sellerMsg = favor === 'seller'
-      ? `The dispute for trade ${trade.reference} was resolved in your favour.`
-      : `The dispute for trade ${trade.reference} was resolved in the buyer's favour.`;
+    const buyerMsg =
+      favor === 'buyer'
+        ? `Your dispute for trade ${trade.reference} was resolved in your favour. Your funds have been returned.`
+        : `The dispute for trade ${trade.reference} was resolved in the seller's favour.`;
+    const sellerMsg =
+      favor === 'seller'
+        ? `The dispute for trade ${trade.reference} was resolved in your favour.`
+        : `The dispute for trade ${trade.reference} was resolved in the buyer's favour.`;
 
     await notificationService.createNotification({
       queryRunner: qr,
@@ -1174,8 +1476,13 @@ export async function resolveDispute(req: Request, res: Response) {
       });
     }
 
-    const [updated] = (await qr.query(`SELECT * FROM "disputes" WHERE "id" = $1`, [id])) as Dispute[];
-    return { dispute: updated, trade_status: favor === 'buyer' ? TradeStatus.cancelled : TradeStatus.completed };
+    const [updated] = (await qr.query(`SELECT * FROM "disputes" WHERE "id" = $1`, [
+      id,
+    ])) as Dispute[];
+    return {
+      dispute: updated,
+      trade_status: favor === 'buyer' ? TradeStatus.cancelled : TradeStatus.completed,
+    };
   });
 
   return ok(res, result);
@@ -1197,17 +1504,25 @@ export async function resolveDispute(req: Request, res: Response) {
  */
 export async function listAllTransactions(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
-  const transactions = await withTransaction(async (qr) => {
-    return (await qr.query(
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const { transactions, total } = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query('SELECT COUNT(*) as total FROM "ledger"')) as [
+      { total: string },
+    ];
+    const transactions = (await qr.query(
       `SELECT l.*, u.name as user_name 
        FROM "ledger" l 
        JOIN "users" u ON l.user_id = u.id 
        ORDER BY l.created_at DESC 
        LIMIT $1 OFFSET $2`,
-      [limit, (parseInt(page) - 1) * parseInt(limit)],
+      [limitNum, offset],
     )) as Array<Record<string, unknown>>;
+    return { transactions, total: parseInt(total) };
   });
-  return ok(res, { transactions });
+  return ok(res, { items: transactions, total, page: pageNum, limit: limitNum });
 }
 
 /**
@@ -1243,7 +1558,9 @@ export async function rejectDeposit(req: Request, res: Response) {
   const { reason } = z.object({ reason: z.string().min(5) }).parse(req.body);
 
   const deposit = await withTransaction(async (qr) => {
-    const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [id])) as Deposit[];
+    const rows = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1 FOR UPDATE`, [
+      id,
+    ])) as Deposit[];
     const dep = rows[0];
     if (!dep) throw new NotFoundError('Deposit not found');
 
@@ -1251,12 +1568,10 @@ export async function rejectDeposit(req: Request, res: Response) {
       throw new AppError('INVALID_STATUS', 'Cannot reject a completed deposit', 400);
     }
 
-    await qr.query(`UPDATE "deposits" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3, "reviewed_at" = NOW() WHERE "id" = $4`, [
-      DepositStatus.rejected,
-      reason,
-      req.user!.id,
-      id,
-    ]);
+    await qr.query(
+      `UPDATE "deposits" SET "status" = $1, "rejection_reason" = $2, "reviewed_by" = $3, "reviewed_at" = NOW() WHERE "id" = $4`,
+      [DepositStatus.rejected, reason, req.user!.id, id],
+    );
 
     const notificationService = new NotificationService();
     await notificationService.createNotification({
@@ -1268,7 +1583,9 @@ export async function rejectDeposit(req: Request, res: Response) {
       relatedId: dep.id,
     });
 
-    const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [dep.id])) as Deposit[];
+    const updated = (await qr.query(`SELECT * FROM "deposits" WHERE "id" = $1 LIMIT 1`, [
+      dep.id,
+    ])) as Deposit[];
     return updated[0];
   });
 
@@ -1310,7 +1627,11 @@ export async function inviteAdmin(req: Request, res: Response) {
       [invitedEmail],
     )) as Array<{ id: string; role: UserRole; deleted_at: Date | null; is_suspended: boolean }>;
 
-    if (already.length > 0 && (already[0].role === UserRole.admin || already[0].role === UserRole.super_admin) && !already[0].deleted_at) {
+    if (
+      already.length > 0 &&
+      (already[0].role === UserRole.admin || already[0].role === UserRole.super_admin) &&
+      !already[0].deleted_at
+    ) {
       return { accepted: true, invitedEmail, inviteId: null as string | null };
     }
 
@@ -1390,20 +1711,35 @@ export async function acceptAdminInvite(req: Request, res: Response) {
     }>;
 
     const invite = inviteRows[0];
-    if (!invite) throw new AppError('INVITE_EXPIRED_OR_INVALID', 'Invite token is invalid or expired', 400);
+    if (!invite)
+      throw new AppError('INVITE_EXPIRED_OR_INVALID', 'Invite token is invalid or expired', 400);
 
     const userRows = (await qr.query(
       `SELECT "id","name","email","role","deleted_at" FROM "users" WHERE "email" = $1 AND "deleted_at" IS NULL LIMIT 1 FOR UPDATE`,
       [invite.invited_email],
-    )) as Array<{ id: string; name: string; email: string; role: UserRole; deleted_at: Date | null }>;
+    )) as Array<{
+      id: string;
+      name: string;
+      email: string;
+      role: UserRole;
+      deleted_at: Date | null;
+    }>;
 
     const user = userRows[0];
     if (!user) {
       // Invite remains unconsumed until a matching user is available.
-      return { accepted: false, inviteId: invite.id, invitedEmail: invite.invited_email, grantedRole: invite.granted_role };
+      return {
+        accepted: false,
+        inviteId: invite.id,
+        invitedEmail: invite.invited_email,
+        grantedRole: invite.granted_role,
+      };
     }
 
-    await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [invite.granted_role, user.id]);
+    await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [
+      invite.granted_role,
+      user.id,
+    ]);
     await qr.query(
       `UPDATE "admin_invites" SET "consumed_at" = now(), "consumed_by" = $1 WHERE "id" = $2`,
       [user.id, invite.id],
@@ -1412,20 +1748,30 @@ export async function acceptAdminInvite(req: Request, res: Response) {
     await qr.query(
       `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
        VALUES (gen_random_uuid(), $1, 'ADMIN_INVITE_ACCEPTED', 'user', $2, $3, now())`,
-      [invite.inviter_id, user.id, JSON.stringify({ inviteId: invite.id, acceptedUserId: user.id })],
+      [
+        invite.inviter_id,
+        user.id,
+        JSON.stringify({ inviteId: invite.id, acceptedUserId: user.id }),
+      ],
     );
 
-    return { accepted: true, inviteId: invite.id, userId: user.id, name: user.name, email: user.email };
+    return {
+      accepted: true,
+      inviteId: invite.id,
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+    };
   });
 
   if (!result.accepted) {
-    return ok(res, { 
-      message: 'Invite is valid. Please set up your account to complete.', 
+    return ok(res, {
+      message: 'Invite is valid. Please set up your account to complete.',
       setupRequired: true,
       invite: {
         email: result.invitedEmail,
-        role: result.grantedRole
-      }
+        role: result.grantedRole,
+      },
     });
   }
 
@@ -1495,15 +1841,20 @@ export async function completeAdminSetup(req: Request, res: Response) {
     }>;
 
     const invite = inviteRows[0];
-    if (!invite) throw new AppError('INVITE_EXPIRED_OR_INVALID', 'Invite token is invalid or expired', 400);
+    if (!invite)
+      throw new AppError('INVITE_EXPIRED_OR_INVALID', 'Invite token is invalid or expired', 400);
 
     const alreadyExists = (await qr.query(
       `SELECT id FROM "users" WHERE "email" = $1 OR "phone" = $2`,
-      [invite.invited_email, input.phone]
+      [invite.invited_email, input.phone],
     )) as any[];
 
     if (alreadyExists.length > 0) {
-      throw new AppError('USER_ALREADY_EXISTS', 'A user with this email or phone already exists.', 400);
+      throw new AppError(
+        'USER_ALREADY_EXISTS',
+        'A user with this email or phone already exists.',
+        400,
+      );
     }
 
     const password_hash = await bcrypt.hash(input.password, 12);
@@ -1526,7 +1877,11 @@ export async function completeAdminSetup(req: Request, res: Response) {
     await qr.query(
       `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
        VALUES (gen_random_uuid(), $1, 'ADMIN_INVITE_ACCEPTED', 'user', $2, $3, now())`,
-      [invite.inviter_id, user.id, JSON.stringify({ inviteId: invite.id, acceptedUserId: user.id, setup: true })],
+      [
+        invite.inviter_id,
+        user.id,
+        JSON.stringify({ inviteId: invite.id, acceptedUserId: user.id, setup: true }),
+      ],
     );
 
     return { inviteId: invite.id, userId: user.id, name: user.name, email: user.email };
@@ -1565,11 +1920,21 @@ export async function removeAdmin(req: Request, res: Response) {
     const rows = (await qr.query(
       `SELECT "id","name","email","role","deleted_at" FROM "users" WHERE "id" = $1 AND "deleted_at" IS NULL LIMIT 1 FOR UPDATE`,
       [id],
-    )) as Array<{ id: string; name: string; email: string; role: UserRole; deleted_at: Date | null }>;
+    )) as Array<{
+      id: string;
+      name: string;
+      email: string;
+      role: UserRole;
+      deleted_at: Date | null;
+    }>;
     const user = rows[0];
     if (!user) throw new NotFoundError('No user with that ID was found.', 'USER_NOT_FOUND');
     if (user.role !== UserRole.admin)
-      throw new AppError('NOT_ADMIN', 'That user is not currently an admin, so their admin role cannot be removed.', 400);
+      throw new AppError(
+        'NOT_ADMIN',
+        'That user is not currently an admin, so their admin role cannot be removed.',
+        400,
+      );
 
     await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [UserRole.user, user.id]);
     await qr.query(
@@ -1614,14 +1979,27 @@ export async function upgradeAdminToSuperAdmin(req: Request, res: Response) {
     const rows = (await qr.query(
       `SELECT "id","email","role","deleted_at","name" FROM "users" WHERE "id" = $1 AND "deleted_at" IS NULL LIMIT 1 FOR UPDATE`,
       [id],
-    )) as Array<{ id: string; email: string; role: UserRole; deleted_at: Date | null; name: string }>;
+    )) as Array<{
+      id: string;
+      email: string;
+      role: UserRole;
+      deleted_at: Date | null;
+      name: string;
+    }>;
     const user = rows[0];
     if (!user) throw new NotFoundError('No user with that ID was found.', 'USER_NOT_FOUND');
 
     if (user.role !== UserRole.admin)
-      throw new AppError('NOT_ADMIN', 'Only users who are already admins can be upgraded to super admin.', 400);
+      throw new AppError(
+        'NOT_ADMIN',
+        'Only users who are already admins can be upgraded to super admin.',
+        400,
+      );
 
-    await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [UserRole.super_admin, user.id]);
+    await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [
+      UserRole.super_admin,
+      user.id,
+    ]);
     await qr.query(
       `INSERT INTO "admin_logs" ("id","admin_id","action","target_type","target_id","details","created_at")
        VALUES (gen_random_uuid(), $1, 'ADMIN_UPGRADED_TO_SUPERADMIN', 'user', $2, $3, now())`,
@@ -1664,17 +2042,26 @@ export async function upgradeAdminToSuperAdmin(req: Request, res: Response) {
  */
 export async function listAdmins(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
-  const admins = await withTransaction(async (qr) => {
-    return (await qr.query(
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
+
+  const { admins, total } = await withTransaction(async (qr) => {
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "users" WHERE "role" = $1 OR "role" = $2`,
+      [UserRole.admin, UserRole.super_admin],
+    )) as [{ total: string }];
+    const admins = (await qr.query(
       `SELECT "id","name","username","email","phone","role","is_suspended","kyc_status","created_at"
        FROM "users"
        WHERE "role" = $1 OR "role" = $2
        ORDER BY "created_at" DESC
        LIMIT $3 OFFSET $4`,
-      [UserRole.admin, UserRole.super_admin, limit, (parseInt(page) - 1) * parseInt(limit)],
+      [UserRole.admin, UserRole.super_admin, limitNum, offset],
     )) as Array<Record<string, unknown>>;
+    return { admins, total: parseInt(total) };
   });
-  return ok(res, { admins });
+  return ok(res, { items: admins, total, page: pageNum, limit: limitNum });
 }
 
 /**
@@ -1731,10 +2118,13 @@ export async function updateAdminProfilePicture(req: Request, res: Response) {
   const file = req.file as Express.Multer.File | undefined;
   if (!file) throw new AppError('FILE_REQUIRED', 'Profile picture file is required', 400);
 
-  const uploaded = await cloudinary.uploader.upload(`data:${file.mimetype};base64,${file.buffer.toString('base64')}`, {
-    folder: 'sabo-finance/admin-profile',
-    resource_type: 'image',
-  });
+  const uploaded = await cloudinary.uploader.upload(
+    `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
+    {
+      folder: 'sabo-finance/admin-profile',
+      resource_type: 'image',
+    },
+  );
 
   const result = await withTransaction(async (qr) => {
     await qr.query(`UPDATE "users" SET "profile_picture_url" = $1 WHERE "id" = $2`, [
@@ -1777,22 +2167,32 @@ export async function updateAdminProfilePicture(req: Request, res: Response) {
  */
 export async function listAdminLogs(req: Request, res: Response) {
   const { page, limit } = paginationSchema.parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
   const actorId = req.user!.id;
   const isSuper = req.user!.role === UserRole.super_admin;
 
-  const logs = await withTransaction(async (qr) => {
+  const { logs, total } = await withTransaction(async (qr) => {
     const params: unknown[] = [];
-    let query = `SELECT * FROM "admin_logs"`;
+    let baseQuery = `FROM "admin_logs"`;
     if (!isSuper) {
-      query += ` WHERE "admin_id" = $1`;
+      baseQuery += ` WHERE "admin_id" = $1`;
       params.push(actorId);
     }
-    query += ` ORDER BY "created_at" DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
-    return qr.query(query, params);
+
+    const [{ total }] = (await qr.query(`SELECT COUNT(*) as total ${baseQuery}`, params)) as [
+      { total: string },
+    ];
+
+    let dataQuery = `SELECT * ${baseQuery} ORDER BY "created_at" DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    const dataParams = [...params, limitNum, offset];
+    const logs = (await qr.query(dataQuery, dataParams)) as Array<Record<string, unknown>>;
+
+    return { logs, total: parseInt(total) };
   });
 
-  return ok(res, { logs });
+  return ok(res, { items: logs, total, page: pageNum, limit: limitNum });
 }
 
 const metricsQuerySchema = z.object({
@@ -1863,14 +2263,14 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
   const growthFrom = query.from ?? anchoredGrowthFrom();
 
   const metrics = await withTransaction(async (qr) => {
-
     // ─────────────────────────────────────────────────────────────────
     // USER METRICS
     // total_registered/active/suspended/kyc = all-time platform snapshot
     // new_registrations = users who registered within the window
     // ─────────────────────────────────────────────────────────────────
 
-    const [userCounts] = await qr.query(`
+    const [userCounts] = (await qr.query(
+      `
       SELECT
         COUNT(*) FILTER (WHERE deleted_at IS NULL)                                                          AS total_registered,
         COUNT(*) FILTER (WHERE deleted_at IS NULL AND is_suspended = false AND kyc_status = 'verified')      AS total_active,
@@ -1882,27 +2282,28 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
         COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at <= $1::timestamptz)                        AS users_at_launch
       FROM "users"
       WHERE "role" = 'user'
-    `, [launchDate]) as [Record<string, string>];
+    `,
+      [launchDate],
+    )) as [Record<string, string>];
 
     const totalRegistered = parseInt(userCounts.total_registered) || 0;
     const kycVerified = parseInt(userCounts.kyc_verified) || 0;
-    const kycVerifiedPct = totalRegistered > 0
-      ? parseFloat(((kycVerified / totalRegistered) * 100).toFixed(2))
-      : 0;
+    const kycVerifiedPct =
+      totalRegistered > 0 ? parseFloat(((kycVerified / totalRegistered) * 100).toFixed(2)) : 0;
 
     // MAU: distinct users with a completed ledger entry in the last 30 days (rolling, not window-scoped)
-    const [mauRow] = await qr.query(`
+    const [mauRow] = (await qr.query(`
       SELECT COUNT(DISTINCT user_id) AS mau
       FROM "ledger"
       WHERE created_at >= NOW() - INTERVAL '30 days'
         AND status = 'completed'
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
     // ─────────────────────────────────────────────────────────────────
     // KYC METRICS — all-time totals (not window-scoped)
     // ─────────────────────────────────────────────────────────────────
 
-    const [kycTimingRow] = await qr.query(`
+    const [kycTimingRow] = (await qr.query(`
       SELECT
         ROUND(
           AVG(EXTRACT(EPOCH FROM (reviewed_at - created_at)) / 3600)::numeric,
@@ -1915,10 +2316,10 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
       FROM "kyc"
       WHERE status = 'verified'
         AND reviewed_at IS NOT NULL
-    `) as [Record<string, string | null>];
+    `)) as [Record<string, string | null>];
 
     // Drop-off: all-time users who never submitted KYC
-    const [kycDropoffRow] = await qr.query(`
+    const [kycDropoffRow] = (await qr.query(`
       SELECT
         COUNT(u.id)                                          AS total_users,
         COUNT(u.id) FILTER (WHERE k.user_id IS NULL)         AS never_submitted,
@@ -1933,10 +2334,10 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
       ) k ON k.user_id = u.id
       WHERE u.role = 'user'
         AND u.deleted_at IS NULL
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
     // First-attempt success rate — all-time
-    const [kycFirstAttemptRow] = await qr.query(`
+    const [kycFirstAttemptRow] = (await qr.query(`
       WITH first_submissions AS (
         SELECT DISTINCT ON (user_id)
           user_id,
@@ -1955,23 +2356,23 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
           2
         ) AS first_attempt_success_rate_pct
       FROM first_submissions
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
     // Total KYC submissions — all-time
-    const [kycTotalsRow] = await qr.query(`
+    const [kycTotalsRow] = (await qr.query(`
       SELECT
         COUNT(*)                                            AS total_submissions,
         COUNT(*) FILTER (WHERE status = 'verified')        AS verified,
         COUNT(*) FILTER (WHERE status = 'rejected')        AS rejected,
         COUNT(*) FILTER (WHERE status = 'pending')         AS pending
       FROM "kyc"
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
     // ─────────────────────────────────────────────────────────────────
     // TRADE / VOLUME METRICS — all-time totals (not window-scoped)
     // ─────────────────────────────────────────────────────────────────
 
-    const tradeVolumeRows = await qr.query(`
+    const tradeVolumeRows = (await qr.query(`
       SELECT
         currency,
         COUNT(*)                                                                  AS total_trades,
@@ -1985,9 +2386,9 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
           FILTER (WHERE status = 'completed' AND completed_at IS NOT NULL)       AS avg_settlement_hours
       FROM "trades"
       GROUP BY currency
-    `) as Array<Record<string, string | null>>;
+    `)) as Array<Record<string, string | null>>;
 
-    const [tradeTotalsRow] = await qr.query(`
+    const [tradeTotalsRow] = (await qr.query(`
       SELECT
         COUNT(*)                                                            AS total_initiated,
         COUNT(*) FILTER (WHERE status = 'completed')                       AS total_completed,
@@ -2011,27 +2412,27 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
           2
         )                                                                  AS avg_settlement_hours
       FROM "trades"
-    `) as [Record<string, string | null>];
+    `)) as [Record<string, string | null>];
 
     // ─────────────────────────────────────────────────────────────────
     // P2P / SABITS METRICS — all-time totals (not window-scoped)
     // ─────────────────────────────────────────────────────────────────
 
-    const [p2pRow] = await qr.query(`
+    const [p2pRow] = (await qr.query(`
       SELECT
         COUNT(*) FILTER (WHERE status = 'active')     AS active_listings,
         COUNT(*) FILTER (WHERE status = 'completed')  AS completed_listings,
         COUNT(*) FILTER (WHERE status = 'cancelled')  AS cancelled_listings,
         COUNT(DISTINCT user_id)                       AS total_sellers
       FROM "sabits"
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
-    const [p2pBuyersRow] = await qr.query(`
+    const [p2pBuyersRow] = (await qr.query(`
       SELECT COUNT(DISTINCT buyer_id) AS total_buyers
       FROM "trades"
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
-    const [repeatRow] = await qr.query(`
+    const [repeatRow] = (await qr.query(`
       WITH trade_counts AS (
         SELECT buyer_id AS user_id, COUNT(*) AS cnt
         FROM "trades"
@@ -2057,27 +2458,28 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
           2
         )                                            AS repeat_rate_pct
       FROM user_trade_totals
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
-    const [disputeRow] = await qr.query(`
+    const [disputeRow] = (await qr.query(`
       SELECT
         COUNT(*)                                         AS total_disputes,
         COUNT(*) FILTER (WHERE status = 'open')          AS open_disputes,
         COUNT(*) FILTER (WHERE status = 'resolved')      AS resolved_disputes
       FROM "disputes"
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
     const totalCompletedTrades = parseInt(tradeTotalsRow.total_completed ?? '0') || 0;
     const totalDisputes = parseInt(disputeRow.total_disputes) || 0;
-    const disputeRatePct = totalCompletedTrades > 0
-      ? parseFloat(((totalDisputes / totalCompletedTrades) * 100).toFixed(4))
-      : 0;
+    const disputeRatePct =
+      totalCompletedTrades > 0
+        ? parseFloat(((totalDisputes / totalCompletedTrades) * 100).toFixed(4))
+        : 0;
 
     // ─────────────────────────────────────────────────────────────────
     // ESCROW METRICS — all-time totals; live_tvl is current wallet snapshot
     // ─────────────────────────────────────────────────────────────────
 
-    const [escrowRow] = await qr.query(`
+    const [escrowRow] = (await qr.query(`
       SELECT
         -- All-time NGN that passed through escrow lock (completed + escrowed + disputed)
         COALESCE(
@@ -2103,26 +2505,26 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
           2
         ) AS timeout_rate_pct
       FROM "trades"
-    `) as [Record<string, string | null>];
+    `)) as [Record<string, string | null>];
 
     // currently_escrowed is a live snapshot — never window-scoped
-    const [escrowLiveRow] = await qr.query(`
+    const [escrowLiveRow] = (await qr.query(`
       SELECT COUNT(*) AS currently_escrowed FROM "trades" WHERE status = 'escrowed'
-    `) as [Record<string, string>];
+    `)) as [Record<string, string>];
 
     // Live TVL is always a current wallet snapshot — not window-scoped
-    const escrowTvlRows = await qr.query(`
+    const escrowTvlRows = (await qr.query(`
       SELECT currency, COALESCE(SUM(escrow_balance), 0) AS locked_value
       FROM "wallets"
       WHERE escrow_balance > 0
       GROUP BY currency
-    `) as Array<Record<string, string>>;
+    `)) as Array<Record<string, string>>;
 
     // ─────────────────────────────────────────────────────────────────
     // DEPOSIT METRICS — all-time totals (not window-scoped)
     // ─────────────────────────────────────────────────────────────────
 
-    const depositVolumeRows = await qr.query(`
+    const depositVolumeRows = (await qr.query(`
       SELECT
         currency,
         COUNT(*)                                              AS total_deposits,
@@ -2135,7 +2537,7 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
         COALESCE(SUM(amount) FILTER (WHERE status = 'completed'), 0) AS total_volume
       FROM "deposits"
       GROUP BY currency
-    `) as Array<Record<string, string>>;
+    `)) as Array<Record<string, string>>;
 
     // ─────────────────────────────────────────────────────────────────
     // GROWTH METRICS — monthly breakdown within the window
@@ -2144,8 +2546,9 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
     // All three granularities include a baseline CTE that counts users registered
     // BEFORE the window start, so cumulative_users starts from that offset rather
     // than 0. This ensures the chart adds up to total_registered correctly.
-    const userGrowthSql = granularity === 'day'
-      ? `WITH baseline AS (
+    const userGrowthSql =
+      granularity === 'day'
+        ? `WITH baseline AS (
            SELECT COUNT(*) AS prior_users FROM "users"
            WHERE role = 'user' AND deleted_at IS NULL
              AND created_at < DATE_TRUNC('day', $1::timestamptz)
@@ -2168,8 +2571,8 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
            GROUP BY bucket
          ) u ON u.bucket = d.day
          ORDER BY d.day ASC`
-      : granularity === 'week'
-      ? `WITH baseline AS (
+        : granularity === 'week'
+          ? `WITH baseline AS (
            SELECT COUNT(*) AS prior_users FROM "users"
            WHERE role = 'user' AND deleted_at IS NULL
              AND created_at < DATE_TRUNC('week', $1::timestamptz)
@@ -2195,7 +2598,7 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
            GROUP BY bucket
          ) u ON u.bucket = w.bucket
          ORDER BY w.bucket ASC`
-      : `WITH baseline AS (
+          : `WITH baseline AS (
            SELECT COUNT(*) AS prior_users FROM "users"
            WHERE role = 'user' AND deleted_at IS NULL
              AND created_at < DATE_TRUNC('month', $1::timestamptz)
@@ -2222,10 +2625,13 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
          ) u ON u.bucket = m.bucket
          ORDER BY m.bucket ASC`;
 
-    const userGrowthMonthly = await qr.query(userGrowthSql, [growthFrom, windowTo]) as Array<Record<string, string>>;
+    const userGrowthMonthly = (await qr.query(userGrowthSql, [growthFrom, windowTo])) as Array<
+      Record<string, string>
+    >;
 
-    const tradeVolumeSql = granularity === 'day'
-      ? `WITH baseline AS (
+    const tradeVolumeSql =
+      granularity === 'day'
+        ? `WITH baseline AS (
            SELECT COALESCE(SUM(total_ngn), 0) AS prior_volume
            FROM "trades"
            WHERE status = 'completed'
@@ -2255,8 +2661,8 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
            GROUP BY bucket
          ) t ON t.bucket = d.bucket
          ORDER BY d.bucket ASC`
-      : granularity === 'week'
-      ? `WITH baseline AS (
+        : granularity === 'week'
+          ? `WITH baseline AS (
            SELECT COALESCE(SUM(total_ngn), 0) AS prior_volume
            FROM "trades"
            WHERE status = 'completed'
@@ -2286,7 +2692,7 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
            GROUP BY bucket
          ) t ON t.bucket = w.bucket
          ORDER BY w.bucket ASC`
-      : `WITH baseline AS (
+          : `WITH baseline AS (
            SELECT COALESCE(SUM(total_ngn), 0) AS prior_volume
            FROM "trades"
            WHERE status = 'completed'
@@ -2317,7 +2723,9 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
          ) t ON t.bucket = m.bucket
          ORDER BY m.bucket ASC`;
 
-    const tradeVolumeMonthly = await qr.query(tradeVolumeSql, [growthFrom, windowTo]) as Array<Record<string, string>>;
+    const tradeVolumeMonthly = (await qr.query(tradeVolumeSql, [growthFrom, windowTo])) as Array<
+      Record<string, string>
+    >;
 
     // ─────────────────────────────────────────────────────────────────
     // PLATFORM / STATIC CONSTANTS
@@ -2368,9 +2776,10 @@ export async function getMetricsAnalytics(req: Request, res: Response) {
         median_verification_hours: kycTimingRow.median_verification_hours
           ? parseFloat(kycTimingRow.median_verification_hours)
           : null,
-        avg_verification_hours_note: kycTimingRow.avg_verification_hours === null
-          ? 'No verified KYC records with reviewed_at timestamp yet.'
-          : null,
+        avg_verification_hours_note:
+          kycTimingRow.avg_verification_hours === null
+            ? 'No verified KYC records with reviewed_at timestamp yet.'
+            : null,
         dropoff: {
           total_users: parseInt(kycDropoffRow.total_users) || 0,
           never_submitted: parseInt(kycDropoffRow.never_submitted) || 0,

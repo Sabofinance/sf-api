@@ -157,7 +157,7 @@ export async function listUserDisputes(req: Request, res: Response) {
     return { disputes, total: parseInt(total) };
   });
 
-  return ok(res, { disputes: result.disputes, total: result.total, page: pageNum, limit: limitNum });
+  return ok(res, { items: result.disputes, disputes: result.disputes, total: result.total, page: pageNum, limit: limitNum });
 }
 
 /**

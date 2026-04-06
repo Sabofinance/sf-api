@@ -110,7 +110,7 @@ export async function listBeneficiaries(req: Request, res: Response) {
     return { beneficiaries, total: parseInt(total) };
   });
 
-  return ok(res, { beneficiaries: result.beneficiaries, total: result.total, page: pageNum, limit: limitNum });
+  return ok(res, { items: result.beneficiaries, beneficiaries: result.beneficiaries, total: result.total, page: pageNum, limit: limitNum });
 }
 
 /**

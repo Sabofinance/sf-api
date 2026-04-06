@@ -60,9 +60,24 @@ const listTradesSchema = z.object({
 export async function listUserTrades(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
   const { page, limit, status } = listTradesSchema.parse(req.query);
-  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
 
-  const trades = await withTransaction(async (qr) => {
+  const { trades, total } = await withTransaction(async (qr) => {
+    let baseWhere = `WHERE (t.buyer_id = $1 OR t.seller_id = $1)`;
+    const params: any[] = [req.user!.id];
+
+    if (status) {
+      baseWhere += ` AND t.status = $2`;
+      params.push(status);
+    }
+
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "trades" t ${baseWhere}`,
+      params,
+    )) as [{ total: string }];
+
     let query = `
       SELECT t.*, 
              s.currency as sabit_currency, s.rate_ngn as sabit_rate,
@@ -71,22 +86,17 @@ export async function listUserTrades(req: Request, res: Response) {
       JOIN "sabits" s ON t.sabit_id = s.id
       JOIN "users" u_buyer ON t.buyer_id = u_buyer.id
       JOIN "users" u_seller ON t.seller_id = u_seller.id
-      WHERE (t.buyer_id = $1 OR t.seller_id = $1)
+      ${baseWhere}
+      ORDER BY t.created_at DESC 
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
-    const params: any[] = [req.user!.id];
+    params.push(limitNum, offset);
 
-    if (status) {
-      query += ` AND t.status = $2`;
-      params.push(status);
-    }
-
-  query += ` ORDER BY t.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(parseInt(limit), offset);
-
-    return (await qr.query(query, params)) as Trade[];
+    const trades = (await qr.query(query, params)) as Trade[];
+    return { trades, total: parseInt(total) };
   });
 
-  return ok(res, { trades });
+  return ok(res, { items: trades, trades, total, page: pageNum, limit: limitNum });
 }
 
 /**

@@ -213,21 +213,27 @@ export async function getMyBids(req: Request, res: Response) {
   const limit = parseInt(req.query.limit as string) || 20;
   const offset = (page - 1) * limit;
 
-  let query = `SELECT * FROM "bids" WHERE "buyer_id" = $1`;
-  const params: unknown[] = [req.user!.id];
+  const { bids, total } = await withTransaction(async (qr) => {
+    let baseWhere = `WHERE "buyer_id" = $1`;
+    const params: unknown[] = [req.user!.id];
 
-  if (status) {
-    query += ` AND "status" = $2`;
-    params.push(status);
-  }
+    if (status) {
+      baseWhere += ` AND "status" = $2`;
+      params.push(status);
+    }
 
-  query += ` ORDER BY "created_at" DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-  
-  const bids = await withTransaction(async (qr) => {
-    return qr.query(query, [...params, limit, offset]);
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "bids" ${baseWhere}`,
+      params,
+    )) as [{ total: string }];
+
+    let query = `SELECT * FROM "bids" ${baseWhere} ORDER BY "created_at" DESC LIMIT ${params.length + 1} OFFSET ${params.length + 2}`;
+    const bids = await qr.query(query, [...params, limit, offset]);
+
+    return { bids, total: parseInt(total) };
   });
 
-  return ok(res, { bids });
+  return ok(res, { items: bids, bids, total, page, limit });
 }
 
 /**
@@ -247,21 +253,27 @@ export async function getReceivedBids(req: Request, res: Response) {
   const limit = parseInt(req.query.limit as string) || 20;
   const offset = (page - 1) * limit;
 
-  let query = `SELECT * FROM "bids" WHERE "seller_id" = $1`;
-  const params: unknown[] = [req.user!.id];
+  const { bids, total } = await withTransaction(async (qr) => {
+    let baseWhere = `WHERE "seller_id" = $1`;
+    const params: unknown[] = [req.user!.id];
 
-  if (status) {
-    query += ` AND "status" = $2`;
-    params.push(status);
-  }
+    if (status) {
+      baseWhere += ` AND "status" = $2`;
+      params.push(status);
+    }
 
-  query += ` ORDER BY "created_at" DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-  
-  const bids = await withTransaction(async (qr) => {
-    return qr.query(query, [...params, limit, offset]);
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "bids" ${baseWhere}`,
+      params,
+    )) as [{ total: string }];
+
+     let query = `SELECT * FROM "bids" ${baseWhere} ORDER BY "created_at" DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    const bids = await qr.query(query, [...params, limit, offset]);
+
+    return { bids, total: parseInt(total) };
   });
 
-  return ok(res, { bids });
+  return ok(res, { items: bids, bids, total, page, limit });
 }
 
 /**

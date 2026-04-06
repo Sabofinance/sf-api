@@ -2,11 +2,26 @@
 
 All responses follow the standard envelope:
 
-### Success
+### Success (Single Object)
 ```json
 {
   "success": true,
   "data": {},
+  "meta": {},
+  "error": null
+}
+```
+
+### Success (Paginated List)
+```json
+{
+  "success": true,
+  "data": {
+    "items": [],
+    "total": 0,
+    "page": 1,
+    "limit": 20
+  },
   "meta": {},
   "error": null
 }
@@ -266,6 +281,10 @@ List deposits for the authenticated user.
 
 Auth Required: Yes
 
+Query Parameters:
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+
 ### GET /deposits/:id
 Get a specific deposit by ID owned by the authenticated user.
 
@@ -295,6 +314,10 @@ Request Body:
 List withdrawals for the authenticated user.
 
 Auth Required: Yes
+
+Query Parameters:
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
 
 ### GET /withdrawals/:id
 Get a specific withdrawal by ID.
@@ -329,6 +352,10 @@ Request Body:
 List beneficiaries for the authenticated user.
 
 Auth Required: Yes
+
+Query Parameters:
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
 
 ### DELETE /beneficiaries/:id
 Delete a beneficiary.
@@ -406,6 +433,8 @@ List active Sabits.
 Optional Query Parameters:
 - `type`: BUY or SELL
 - `currency`: GBP, USD, CAD
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
 
 ### GET /sabits/:id
 Get a specific Sabit by ID.
@@ -518,6 +547,16 @@ Path Parameters:
 
 ## Trades
 
+### GET /trades
+List trades for the authenticated user.
+
+Auth Required: Yes
+
+Query Parameters:
+- `status` (optional)
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+
 ### POST /trades/initiate
 Initiate a trade against a Sabit.
 
@@ -584,6 +623,10 @@ Request Body:
 List disputes for the authenticated user.
 
 Auth Required: Yes
+
+Query Parameters:
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
 
 ### GET /disputes/:id
 Get a specific dispute by ID.
@@ -709,8 +752,8 @@ List all users.
 Auth Required: Yes (Admin)
 
 Query Parameters:
-- `page` (optional)
-- `limit` (optional)
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
 
 ### GET /admin/users/:id
 Get a specific user and their wallets.
@@ -755,8 +798,8 @@ List admin logs. Regular admins see own logs; super admins see all.
 Auth Required: Yes (Admin)
 
 Query Parameters:
-- `page` (optional)
-- `limit` (optional)
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
 
 ### GET /admin/kyc
 List all KYC submissions.
@@ -764,8 +807,8 @@ List all KYC submissions.
 Auth Required: Yes (Admin)
 
 Query Parameters:
-- `page` (optional)
-- `limit` (optional)
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
 
 ### POST /admin/kyc/:id/approve
 Approve a KYC submission.
@@ -819,37 +862,51 @@ Get admin dashboard statistics.
 
 Auth Required: Yes (Admin)
 
-### GET /admin/analytics/impact
-Get admin impact and system analytics.
-
-Auth Required: Yes (Admin)
-
-### GET /admin/deposits
-List all deposits across the platform.
-
-Auth Required: Yes (Admin)
-
-Query Parameters:
-- `page` (optional)
-- `limit` (optional)
-
-### GET /admin/disputes
-List all disputes across the platform.
-
-Auth Required: Yes (Admin)
-
-Query Parameters:
-- `page` (optional)
-- `limit` (optional)
-
 ### GET /admin/transactions
 List all ledger transactions across the platform.
 
 Auth Required: Yes (Admin)
 
 Query Parameters:
-- `page` (optional)
-- `limit` (optional)
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+
+### GET /admin/withdrawals
+List all withdrawal requests across the platform.
+
+Auth Required: Yes (Admin)
+
+Query Parameters:
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+
+### POST /admin/withdrawals/:id/approve
+Approve a withdrawal request.
+
+Auth Required: Yes (Admin)
+
+Path Parameters:
+- `id`: UUID
+
+### POST /admin/withdrawals/:id/reject
+Reject a withdrawal request and refund the user's wallet.
+
+Auth Required: Yes (Admin)
+
+Path Parameters:
+- `id`: UUID
+
+Request Body:
+```json
+{
+  "reason": "Invalid account details"
+}
+```
+
+### GET /admin/depositsGET /admin/analytics/impact
+Get admin impact and system analytics.
+
+Auth Required: Yes (Admin)
 
 ---
 

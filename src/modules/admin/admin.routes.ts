@@ -37,6 +37,9 @@ import {
   listAllTrades,
   verifyFlutterwaveDeposit,
   getMetricsAnalytics,
+  listAllWithdrawals,
+  approveWithdrawal,
+  rejectWithdrawal,
 } from './admin.controller';
 
 export const adminRouter = Router();
@@ -92,4 +95,9 @@ adminRouter.get('/trades', asyncHandler(listAllTrades));
 adminRouter.get('/disputes', asyncHandler(listAllDisputes));
 adminRouter.post('/disputes/:id/resolve', asyncHandler(resolveDispute));
 adminRouter.get('/transactions', asyncHandler(listAllTransactions));
+
+// Withdrawal Management
+adminRouter.get('/withdrawals', asyncHandler(listAllWithdrawals));
+adminRouter.post('/withdrawals/:id/approve', asyncHandler(approveWithdrawal));
+adminRouter.post('/withdrawals/:id/reject', asyncHandler(rejectWithdrawal));
 

@@ -37,23 +37,32 @@ const idSchema = z.object({ id: z.string().uuid() });
 export async function listNotifications(req: Request, res: Response) {
   if (!req.user) throw new UnauthorizedError();
   const { page, limit } = paginationSchema.parse(req.query);
+  const pageNum = parseInt(page);
+  const limitNum = parseInt(limit);
+  const offset = (pageNum - 1) * limitNum;
 
-  const notifications = await withTransaction(async (qr) => {
-    let query = `SELECT * FROM "notifications"`;
+  const { notifications, total } = await withTransaction(async (qr) => {
+    let baseWhere = '';
     const params = [];
 
     if (req.user!.role !== UserRole.admin) {
-      query += ` WHERE "user_id" = $1 OR "user_id" IS NULL`;
+      baseWhere = ` WHERE "user_id" = $1 OR "user_id" IS NULL`;
       params.push(req.user!.id);
     }
 
-    query += ` ORDER BY "created_at" DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+    const [{ total }] = (await qr.query(
+      `SELECT COUNT(*) as total FROM "notifications" ${baseWhere}`,
+      params,
+    )) as [{ total: string }];
 
-    return await qr.query(query, params);
+    let query = `SELECT * FROM "notifications" ${baseWhere} ORDER BY "created_at" DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(limitNum, offset);
+
+    const notifications = await qr.query(query, params);
+    return { notifications, total: parseInt(total) };
   });
 
-  return ok(res, { notifications });
+  return ok(res, { items: notifications, notifications, total, page: pageNum, limit: limitNum });
 }
 
 /**

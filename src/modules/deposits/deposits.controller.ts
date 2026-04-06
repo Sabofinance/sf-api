@@ -235,7 +235,7 @@ export async function listDeposits(req: Request, res: Response) {
     return { deposits, total: parseInt(total) };
   });
 
-  return ok(res, { deposits: result.deposits, total: result.total, page: pageNum, limit: limitNum });
+  return ok(res, { items: result.deposits, deposits: result.deposits, total: result.total, page: pageNum, limit: limitNum });
 }
 
 /**
