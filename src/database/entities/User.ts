@@ -19,8 +19,8 @@ export class User {
   email!: string;
 
   @Index({ unique: true })
-  @Column({ type: 'varchar', length: 32 })
-  phone!: string;
+  @Column({ type: 'varchar', length: 32 ,nullable:true})
+  phone?: string | null = null;
 
   @Column({ type: 'varchar', length: 255 })
   password_hash!: string;

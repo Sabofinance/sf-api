@@ -33,6 +33,8 @@ const envSchema = z.object({
   CONTACT_URL: z.string().url().optional(),
   HELP_CENTER_URL: z.string().url().optional(),
   SUPPORT_EMAIL: z.string().email().optional(),
+  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
