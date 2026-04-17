@@ -643,6 +643,22 @@ export interface ExchangeRatesResponse {
   rates: ExchangeRate[];
 }
 
+export interface CompanyRate {
+  id: string;
+  currency: string;
+  rate_ngn: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompanyRatesResponse {
+  rates: CompanyRate[];
+}
+
+export interface CompanyRateResponse {
+  rate: CompanyRate;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTIFICATIONS
 // ─────────────────────────────────────────────────────────────────────────────

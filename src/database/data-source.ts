@@ -6,6 +6,7 @@ import { Bid } from './entities/Bid';
 import { Deposit } from './entities/Deposit';
 import { Dispute } from './entities/Dispute';
 import { ExchangeRate } from './entities/ExchangeRate';
+import { CompanyRate } from './entities/CompanyRate';
 import { Kyc } from './entities/Kyc';
 import { LedgerEntry } from './entities/LedgerEntry';
 import { Notifications } from './entities/Notifications';
@@ -38,6 +39,7 @@ export const AppDataSource = new DataSource({
     LedgerEntry,
     Deposit,
     ExchangeRate,
+    CompanyRate,
     Kyc,
     AdminLog,
     AdminInvite,

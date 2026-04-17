@@ -41,6 +41,7 @@ import {
   approveWithdrawal,
   rejectWithdrawal,
 } from './admin.controller';
+import { createOrUpdateCompanyRate, getCompanyRate, listCompanyRates } from '../company-rates/companyRates.controller';
 
 export const adminRouter = Router();
 
@@ -85,6 +86,11 @@ adminRouter.post('/kyc/:id/reject', asyncHandler(rejectKyc));
 adminRouter.post('/deposits/:id/approve', asyncHandler(approveDeposit));
 adminRouter.post('/deposits/:id/reject', asyncHandler(rejectDeposit));
 adminRouter.post('/deposits/:id/verify-flutterwave', asyncHandler(verifyFlutterwaveDeposit));
+
+// Company Rate Management
+adminRouter.post('/company-rates', asyncHandler(createOrUpdateCompanyRate));
+adminRouter.get('/company-rates', asyncHandler(listCompanyRates));
+adminRouter.get('/company-rates/:currency', asyncHandler(getCompanyRate));
 
 // Dashboard & Analytics
 adminRouter.get('/dashboard', asyncHandler(getDashboardStats));

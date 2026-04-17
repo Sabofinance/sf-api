@@ -30,6 +30,7 @@ export function createSwaggerSpec() {
         { name: 'Disputes' },
         { name: 'KYC' },
         { name: 'Exchange Rates' },
+        { name: 'Company Rates' },
         { name: 'Notifications' },
         { name: 'Admin' },
       ],
