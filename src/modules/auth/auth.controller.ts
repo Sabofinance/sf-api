@@ -267,8 +267,8 @@ export async function register(req: Request, res: Response) {
 
   // Send verification email
   const verificationToken = jwt.sign({ id: user.id, email: user.email, purpose: 'verify-email' }, env.JWT_SECRET, { expiresIn: '1h' });
-  const verificationBaseUrl = env.API_BASE_URL ?? 'http://localhost:3000';
-  const verificationLink = `${verificationBaseUrl}/auth/verify-email?token=${encodeURIComponent(verificationToken)}`;
+  const verificationBaseUrl = env.WEBSITE_URL ?? 'http://localhost:5173';
+  const verificationLink = `${verificationBaseUrl}/verify-email?token=${encodeURIComponent(verificationToken)}`;
   await sendEmail({
     to: user.email,
     subject: 'Verify Your Email Address',
