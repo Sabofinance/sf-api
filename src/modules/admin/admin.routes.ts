@@ -2,14 +2,16 @@ import { Router } from 'express';
 import multer from 'multer';
 
 import { adminMiddleware } from '../../middleware/adminMiddleware';
-import { authMiddleware } from '../../middleware/authMiddleware';
 import { superAdminMiddleware } from '../../middleware/adminMiddleware';
-import { asyncHandler } from '../../utils/asyncHandler';
+import { authMiddleware } from '../../middleware/authMiddleware';
 import { inviteRateLimiter } from '../../middleware/rateLimiter';
+import { asyncHandler } from '../../utils/asyncHandler';
+
 
 import {
   adminLogin,
   adminVerifyOtp,
+  adminResendOtp,
   inviteAdmin,
   acceptAdminInvite,
   completeAdminSetup,
@@ -50,6 +52,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // Public Admin Auth
 adminRouter.post('/auth/login', asyncHandler(adminLogin));
 adminRouter.post('/auth/verify-otp', asyncHandler(adminVerifyOtp));
+adminRouter.post('/auth/resend-otp', asyncHandler(adminResendOtp));
 
 // Public: accept admin invite token
 adminRouter.get('/invites/accept', asyncHandler(acceptAdminInvite));

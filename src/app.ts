@@ -13,9 +13,10 @@ import { apiRouter } from './routes';
 export function createApp() {
   const app = express();
 
+  const corsOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
   app.use(cors({
-    origin: env.CORS_ORIGIN.split(','),
-    credentials: true,
+    origin: corsOrigins.length === 1 && corsOrigins[0] === '*' ? '*' : corsOrigins,
+    credentials: corsOrigins[0] !== '*',
   }));
 
   app.use(express.json({ limit: '1mb' }));
