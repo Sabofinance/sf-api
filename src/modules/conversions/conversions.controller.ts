@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { withTransaction } from '../../database/transaction';
 import { WalletService } from '../../services/walletService';
+import { CompanyRateService } from '../company-rates/companyRates.service';
 import { ok, created } from '../../utils/apiResponse';
 import { Currency, LedgerType } from '../../utils/enums';
 import { AppError, UnauthorizedError } from '../../utils/errors';
@@ -13,6 +14,21 @@ const quoteSchema = z.object({
   to: z.nativeEnum(Currency),
   amount: z.string().regex(/^\d+(\.\d{1,2})?$/),
 });
+
+async function getConversionRate(from: Currency, to: Currency): Promise<Decimal> {
+  if (from === Currency.NGN) {
+    const toRate = await CompanyRateService.getRateByCurrency(to);
+    return new Decimal(1).dividedBy(new Decimal(toRate.rate_ngn));
+  }
+
+  const fromRate = await CompanyRateService.getRateByCurrency(from);
+  if (to === Currency.NGN) {
+    return new Decimal(fromRate.rate_ngn);
+  }
+
+  const toRate = await CompanyRateService.getRateByCurrency(to);
+  return new Decimal(fromRate.rate_ngn).dividedBy(new Decimal(toRate.rate_ngn));
+}
 
 /**
  * @swagger
@@ -47,9 +63,7 @@ export async function getQuote(req: Request, res: Response) {
     throw new AppError('INVALID_CONVERSION', 'Source and destination currency must be different.', 400);
   }
 
-  // In a real system, this would fetch the live rate and apply a spread
-  // For now, we'll use a fixed rate for demonstration
-  const rate = new Decimal(1500); // Example: 1 USD = 1500 NGN
+  const rate = await getConversionRate(from, to);
   const resultAmount = new Decimal(amount).times(rate);
 
   const quote = {
@@ -98,7 +112,7 @@ export async function executeQuote(req: Request, res: Response) {
   }
 
   const walletService = new WalletService();
-  const rate = new Decimal(1500); // Example: 1 USD = 1500 NGN
+  const rate = await getConversionRate(from, to);
   const resultAmount = new Decimal(amount).times(rate);
 
   await withTransaction(async (qr) => {
