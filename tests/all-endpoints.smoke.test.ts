@@ -264,11 +264,22 @@ describe('All Endpoints Smoke', () => {
       .set('Authorization', `Bearer ${buyer.accessToken}`);
     expect(disputeGet.status).toBe(200);
 
+    await withTransaction(async (qr) => {
+      await qr.query(
+        `INSERT INTO "company_rates" ("id","currency","rate_ngn","created_at","updated_at")
+         VALUES (gen_random_uuid(), $1, $2, now(), now())
+         ON CONFLICT ("currency") DO UPDATE SET "rate_ngn" = EXCLUDED."rate_ngn", "updated_at" = now()`,
+        [Currency.USD, '1500.00'],
+      );
+    });
+
     const quote = await request(app)
       .post('/conversions/quote')
       .set('Authorization', `Bearer ${verified.accessToken}`)
       .send({ from: Currency.USD, to: Currency.NGN, amount: '2.00' });
     expect(quote.status).toBe(200);
+    expect(quote.body.data.quote.rate).toBe('1500.00');
+    expect(quote.body.data.quote.resultAmount).toBe('3000.00');
 
     const convert = await request(app)
       .post('/conversions/execute')

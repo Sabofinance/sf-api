@@ -2,17 +2,24 @@ import { Router } from 'express';
 import multer from 'multer';
 
 import { adminMiddleware } from '../../middleware/adminMiddleware';
-import { authMiddleware } from '../../middleware/authMiddleware';
 import { superAdminMiddleware } from '../../middleware/adminMiddleware';
+<<<<<<< HEAD
 import { requirePermission } from '../../middleware/permissionMiddleware';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { inviteRateLimiter } from '../../middleware/rateLimiter';
 import { reliabilityRouter } from '../reliability/reliability.routes';
 import { securityIntelligenceRouter } from '../security-intelligence/security.routes';
+=======
+import { authMiddleware } from '../../middleware/authMiddleware';
+import { inviteRateLimiter } from '../../middleware/rateLimiter';
+import { asyncHandler } from '../../utils/asyncHandler';
+
+>>>>>>> f44922bb5a4b99cbe6dc656b9741cf782bafdb1f
 
 import {
   adminLogin,
   adminVerifyOtp,
+  adminResendOtp,
   inviteAdmin,
   acceptAdminInvite,
   completeAdminSetup,
@@ -53,6 +60,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // Public Admin Auth
 adminRouter.post('/auth/login', asyncHandler(adminLogin));
 adminRouter.post('/auth/verify-otp', asyncHandler(adminVerifyOtp));
+adminRouter.post('/auth/resend-otp', asyncHandler(adminResendOtp));
 
 // Public: accept admin invite token
 adminRouter.get('/invites/accept', asyncHandler(acceptAdminInvite));

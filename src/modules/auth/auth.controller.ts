@@ -632,6 +632,10 @@ const verifyOtpSchema = z.object({
   otp: z.string().length(6),
 });
 
+const resendOtpSchema = z.object({
+  email: z.string().email(),
+});
+
 /**
  * @swagger
  * /auth/verify-otp:
@@ -694,6 +698,72 @@ export async function verifyOtp(req: Request, res: Response) {
   const refreshToken = signRefreshToken(user);
 
   return ok(res, { tokens: { accessToken, refreshToken } });
+}
+
+/**
+ * @swagger
+ * /auth/resend-otp:
+ *   post:
+ *     summary: Resend login OTP
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, example: "jane@example.com" }
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiErrorEnvelope" }
+ */
+export async function resendOtp(req: Request, res: Response) {
+  const input = resendOtpSchema.parse(req.body);
+
+  const user = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id", "name", "email", "role", "kyc_status","is_suspended","deleted_at" FROM "users" WHERE "email" = $1 LIMIT 1`,
+      [input.email.toLowerCase()],
+    )) as Array<{ id: string; name: string; email: string; role: UserRole; kyc_status: string; is_suspended: boolean; deleted_at: Date | null }>;
+
+    return rows[0];
+  });
+
+  if (!user) {
+    // Don't reveal that the email doesn't exist
+    return ok(res, { message: 'If a user with that email exists, a new OTP has been sent.' });
+  }
+  if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
+  if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await withTransaction(async (qr) => {
+    await qr.query(
+      'UPDATE "users" SET "otp" = $1, "otp_expires" = $2, "otp_purpose" = $3, "otp_target_email" = NULL WHERE "id" = $4',
+      [otp, otp_expires, 'login', user.id],
+    );
+  });
+
+  await sendEmail({
+    to: user.email,
+    subject: 'Your OTP for Sabo Finance',
+    template: 'otp',
+    context: { otp },
+  });
+
+  return ok(res, { message: 'If a user with that email exists, a new OTP has been sent.' });
 }
 
 /**

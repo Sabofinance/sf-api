@@ -43,6 +43,10 @@ const verifyOtpSchema = z.object({
   otp: z.string().length(6),
 });
 
+const resendOtpSchema = z.object({
+  email: z.string().email(),
+});
+
 function signAdminAccessToken(user: {
   id: string;
   name: string;
@@ -210,6 +214,60 @@ export async function adminVerifyOtp(req: Request, res: Response) {
     tokens: { accessToken, refreshToken },
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
   });
+}
+
+/**
+ * @swagger
+ * /admin/auth/resend-otp:
+ *   post:
+ *     summary: Resend admin login OTP
+ *     tags: [Admin]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, example: "admin@example.com" }
+ *     responses:
+ *       200:
+ *         description: OK
+ */
+export async function adminResendOtp(req: Request, res: Response) {
+  const input = resendOtpSchema.parse(req.body);
+
+  const user = await withTransaction(async (qr) => {
+    const rows = (await qr.query(
+      `SELECT "id","role","email","name","kyc_status","is_suspended","deleted_at" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) LIMIT 1`,
+      [input.email.toLowerCase(), UserRole.admin, UserRole.super_admin],
+    )) as Array<{ id: string; role: UserRole; email: string; name: string; kyc_status: string; is_suspended: boolean; deleted_at: Date | null; }>;
+    return rows[0];
+  });
+
+  if (!user) throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email.', 401);
+  if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
+  if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  await withTransaction(async (qr) => {
+    await qr.query(
+      'UPDATE "users" SET "otp" = $1, "otp_expires" = $2, "otp_purpose" = $3, "otp_target_email" = NULL WHERE "id" = $4',
+      [otp, otp_expires, 'admin-login', user.id],
+    );
+  });
+
+  await sendEmail({
+    to: user.email,
+    subject: 'Admin Login OTP - Sabo Finance',
+    template: 'otp',
+    context: { otp },
+  });
+
+  return ok(res, { message: 'A new OTP has been sent to your admin email.' });
 }
 
 const idSchema = z.object({ id: z.string().uuid() });
