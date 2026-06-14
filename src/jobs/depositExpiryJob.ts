@@ -2,6 +2,8 @@ import { Deposit } from '../database/entities/Deposit';
 import { withTransaction } from '../database/transaction';
 import { NotificationService } from '../services/notificationService';
 import { DepositStatus, NotificationType } from '../utils/enums';
+import { ReliabilityComponent } from '../utils/observabilityEnums';
+import { runMonitoredJob } from '../utils/jobMonitor';
 
 async function checkExpiredDeposits() {
   await withTransaction(async (qr) => {
@@ -32,7 +34,8 @@ async function checkExpiredDeposits() {
   });
 }
 
-// Run every hour
 setInterval(() => {
-  checkExpiredDeposits().catch((err) => console.error('[depositExpiryJob] error:', err));
+  runMonitoredJob(ReliabilityComponent.background_jobs, 'depositExpiryJob', checkExpiredDeposits).catch(
+    (err) => console.error('[depositExpiryJob] error:', err),
+  );
 }, 60 * 60 * 1000);

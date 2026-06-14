@@ -8,12 +8,15 @@ import { User } from '../../database/entities/User';
 import { withTransaction } from '../../database/transaction';
 import { FlutterwaveProvider } from '../../providers/payments/FlutterwaveProvider';
 import { sendEmail } from '../../services/emailService';
+import { recordHeartbeat } from '../../services/reliability.service';
+import { recordSecurityEvent } from '../../services/securityEvent.service';
 import { NotificationService } from '../../services/notificationService';
 import { nextReference } from '../../services/referenceService';
 import { WalletService } from '../../services/walletService';
 import { created, ok } from '../../utils/apiResponse';
 import { Currency, DepositStatus, LedgerType, NotificationType } from '../../utils/enums';
 import { AppError, NotFoundError, UnauthorizedError } from '../../utils/errors';
+import { HeartbeatStatus, ReliabilityComponent, SecurityEventType } from '../../utils/observabilityEnums';
 
 const initiateNgnSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d{1,2})?$/),
@@ -111,12 +114,19 @@ export async function initiateNgnDeposit(req: Request, res: Response) {
  */
 export async function flutterwaveWebhook(req: Request, res: Response) {
   const provider = new FlutterwaveProvider();
+  const start = Date.now();
 
   try {
     await provider.handleWebhook(req.body, req.headers);
 
     const event = (req.body?.event ?? '') as string;
     if (event !== 'charge.completed') {
+      await recordHeartbeat({
+        component: ReliabilityComponent.webhook,
+        status: HeartbeatStatus.ok,
+        latencyMs: Date.now() - start,
+        metadata: { event, skipped: true },
+      });
       return ok(res, { received: true });
     }
 
@@ -125,7 +135,14 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
     const currency = String(data?.currency ?? '').toUpperCase();
     const webhookAmountRaw = data?.amount;
 
-    if (!reference) return ok(res, { received: true });
+    if (!reference) {
+      void recordSecurityEvent({
+        eventType: SecurityEventType.webhook_malformed,
+        req,
+        details: { reason: 'missing_reference' },
+      });
+      return ok(res, { received: true });
+    }
 
     const walletService = new WalletService();
 
@@ -136,7 +153,14 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
       const dep = rows[0];
       if (!dep) return;
 
-      if (dep.status === DepositStatus.completed) return;
+      if (dep.status === DepositStatus.completed) {
+        void recordSecurityEvent({
+          eventType: SecurityEventType.webhook_replay,
+          req,
+          details: { reference, depositId: dep.id },
+        });
+        return;
+      }
       const depCurrency = String(dep.currency).toUpperCase();
       if (depCurrency !== currency)
         throw new AppError('CURRENCY_MISMATCH', 'Payment currency does not match the deposit record you are completing.', 400);
@@ -187,8 +211,36 @@ export async function flutterwaveWebhook(req: Request, res: Response) {
         });
       }
     });
-  } catch {
-    // Always return 200 to webhook.
+
+    await recordHeartbeat({
+      component: ReliabilityComponent.webhook,
+      status: HeartbeatStatus.ok,
+      latencyMs: Date.now() - start,
+      metadata: { reference, provider: 'flutterwave' },
+    });
+  } catch (err) {
+    const appErr = err as AppError;
+    if (appErr instanceof AppError) {
+      if (appErr.code === 'WEBHOOK_SIGNATURE_INVALID' || appErr.code === 'WEBHOOK_SIGNATURE_MISSING') {
+        void recordSecurityEvent({
+          eventType: SecurityEventType.webhook_invalid_signature,
+          req,
+          details: { code: appErr.code },
+        });
+      } else {
+        void recordSecurityEvent({
+          eventType: SecurityEventType.webhook_malformed,
+          req,
+          details: { code: appErr.code, message: appErr.message },
+        });
+      }
+    }
+    await recordHeartbeat({
+      component: ReliabilityComponent.webhook,
+      status: HeartbeatStatus.failed,
+      latencyMs: Date.now() - start,
+      metadata: { error: err instanceof Error ? err.message : String(err) },
+    });
     return ok(res, { received: true });
   }
 

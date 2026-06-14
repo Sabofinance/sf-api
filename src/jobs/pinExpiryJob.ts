@@ -6,6 +6,8 @@ import { withTransaction } from '../database/transaction';
 import { sendEmail } from '../services/emailService';
 import { NotificationService } from '../services/notificationService';
 import { TradeStatus, NotificationType } from '../utils/enums';
+import { ReliabilityComponent } from '../utils/observabilityEnums';
+import { runMonitoredJob } from '../utils/jobMonitor';
 
 async function checkExpiredTrades() {
   await withTransaction(async (qr) => {
@@ -80,7 +82,8 @@ async function checkExpiredTrades() {
   });
 }
 
-// Run every minute
 setInterval(() => {
-  checkExpiredTrades().catch((err) => console.error('[pinExpiryJob] error:', err));
+  runMonitoredJob(ReliabilityComponent.background_jobs, 'pinExpiryJob', checkExpiredTrades).catch(
+    (err) => console.error('[pinExpiryJob] error:', err),
+  );
 }, 60 * 1000);

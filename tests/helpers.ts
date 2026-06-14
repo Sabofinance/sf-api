@@ -94,12 +94,18 @@ export async function makeAdmin(userId: string) {
   });
 }
 
-export function signAdminToken(userId: string, name: string, email: string) {
+export async function makeSuperAdmin(userId: string) {
+  await withTransaction(async (qr) => {
+    await qr.query(`UPDATE "users" SET "role" = $1 WHERE "id" = $2`, [UserRole.super_admin, userId]);
+  });
+}
+
+export function signAdminToken(userId: string, name: string, email: string, role: UserRole = UserRole.admin) {
   return signTestAccessToken({
     id: userId,
     name,
     email,
-    role: UserRole.admin,
+    role,
     kyc_status: KycStatus.verified,
   });
 }

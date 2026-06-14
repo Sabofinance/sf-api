@@ -9,11 +9,13 @@ import { Strategy as GoogleStrategy, Profile, VerifyCallback } from 'passport-go
 import { env } from '../../config/env';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
+import { recordSecurityEvent } from '../../services/securityEvent.service';
 import { NotificationService } from '../../services/notificationService';
 import { generateUsername } from '../../services/usernameService';
 import { created, ok } from '../../utils/apiResponse';
 import { Currency, UserRole, NotificationType } from '../../utils/enums';
 import { AppError, UnauthorizedError } from '../../utils/errors';
+import { SecurityEventType } from '../../utils/observabilityEnums';
 
 
 
@@ -576,16 +578,34 @@ export async function login(req: Request, res: Response) {
   })) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; }>;
 
   const user = rows[0];
-  if (!user) throw new UnauthorizedError('Invalid email or password.', 'INVALID_CREDENTIALS');
+  if (!user) {
+    void recordSecurityEvent({ eventType: SecurityEventType.auth_failed, req, details: { email: input.email } });
+    throw new UnauthorizedError('Invalid email or password.', 'INVALID_CREDENTIALS');
+  }
   if ((user as unknown as { is_suspended?: boolean; deleted_at?: Date | null }).deleted_at) {
+    void recordSecurityEvent({
+      eventType: SecurityEventType.suspended_account_attempt,
+      req,
+      userId: user.id,
+      details: { reason: 'deleted' },
+    });
     throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
   }
   if ((user as unknown as { is_suspended?: boolean }).is_suspended) {
+    void recordSecurityEvent({
+      eventType: SecurityEventType.suspended_account_attempt,
+      req,
+      userId: user.id,
+      details: { reason: 'suspended' },
+    });
     throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
   }
 
   const okPass = await bcrypt.compare(input.password, user.password_hash);
-  if (!okPass) throw new UnauthorizedError('Invalid email or password.', 'INVALID_CREDENTIALS');
+  if (!okPass) {
+    void recordSecurityEvent({ eventType: SecurityEventType.auth_failed, req, userId: user.id });
+    throw new UnauthorizedError('Invalid email or password.', 'INVALID_CREDENTIALS');
+  }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
@@ -653,6 +673,11 @@ export async function verifyOtp(req: Request, res: Response) {
   });
 
   if (!user) {
+    void recordSecurityEvent({
+      eventType: SecurityEventType.invalid_otp,
+      req,
+      details: { email: input.email, purpose: 'login' },
+    });
     throw new AppError('INVALID_OTP', 'That sign-in code is incorrect or has expired. Request a new OTP from the login screen.', 400);
   }
   if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);

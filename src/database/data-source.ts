@@ -1,15 +1,20 @@
 import { DataSource } from 'typeorm';
 
 import { AdminLog } from './entities/AdminLog';
+import { ApiRequestMetric } from './entities/ApiRequestMetric';
 import { Beneficiary } from './entities/Beneficiary';
 import { Bid } from './entities/Bid';
 import { Deposit } from './entities/Deposit';
 import { Dispute } from './entities/Dispute';
 import { ExchangeRate } from './entities/ExchangeRate';
+import { IncidentEvent } from './entities/IncidentEvent';
 import { CompanyRate } from './entities/CompanyRate';
 import { Kyc } from './entities/Kyc';
 import { LedgerEntry } from './entities/LedgerEntry';
 import { Notifications } from './entities/Notifications';
+import { ReliabilityEvent } from './entities/ReliabilityEvent';
+import { ReliabilityHeartbeat } from './entities/ReliabilityHeartbeat';
+import { SecurityEvent } from './entities/SecurityEvent';
 import { AdminInvite } from './entities/AdminInvite';
 import { Sabit } from './entities/Sabit';
 import { Trade } from './entities/Trade';
@@ -43,13 +48,18 @@ export const AppDataSource = new DataSource({
     Kyc,
     AdminLog,
     AdminInvite,
+    ApiRequestMetric,
     Beneficiary,
     Bid,
     Withdrawal,
     Sabit,
     Trade,
     Dispute,
+    IncidentEvent,
     Notifications,
+    ReliabilityEvent,
+    ReliabilityHeartbeat,
+    SecurityEvent,
     TradeRating,
   ],
   migrations: [

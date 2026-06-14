@@ -4,6 +4,8 @@ import { sendEmail } from '../services/emailService';
 import { NotificationService } from '../services/notificationService';
 import { WalletService } from '../services/walletService';
 import { BidStatus, Currency, LedgerType, NotificationType } from '../utils/enums';
+import { ReliabilityComponent } from '../utils/observabilityEnums';
+import { runMonitoredJob } from '../utils/jobMonitor';
 
 async function checkExpiredBids() {
   await withTransaction(async (qr) => {
@@ -61,7 +63,8 @@ async function checkExpiredBids() {
   });
 }
 
-// Run every 5 minutes
 setInterval(() => {
-  checkExpiredBids().catch((err) => console.error('[bidExpiryJob] error:', err));
+  runMonitoredJob(ReliabilityComponent.background_jobs, 'bidExpiryJob', checkExpiredBids).catch(
+    (err) => console.error('[bidExpiryJob] error:', err),
+  );
 }, 5 * 60 * 1000);

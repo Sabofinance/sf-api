@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 
+import { captureException } from '../config/sentry';
 import { fail } from '../utils/apiResponse';
 import { AppError } from '../utils/errors';
 
@@ -22,7 +23,6 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return fail(res, 401, { code: 'INVALID_TOKEN', message: 'Authentication token is invalid.' });
   }
 
-  // PostgreSQL common failure cases
   if (known?.code === '23505') {
     return fail(res, 409, { code: 'DUPLICATE_RESOURCE', message: known.detail || 'This record already exists.' });
   }
@@ -46,6 +46,8 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     });
   }
 
+  captureException(err);
+
   // eslint-disable-next-line no-console
   console.error('Unhandled error:', {
     path: _req.path,
@@ -57,4 +59,3 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   });
   return fail(res, 500, { code: 'INTERNAL_ERROR', message: 'An unexpected server error occurred. Please try again later.' });
 }
-

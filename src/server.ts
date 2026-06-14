@@ -1,18 +1,24 @@
 import { createApp } from './app';
+import { initObservability } from './config/observabilityInit';
 import { env } from './config/env';
 import { AppDataSource } from './database/data-source';
-import './jobs/pinExpiryJob'; // Initialize background jobs
+import { startAnomalyDetectionJob, startApiMetricsMaintenanceJob } from './jobs/anomalyDetectionJob';
+import './jobs/pinExpiryJob';
 import './jobs/bidExpiryJob';
 import './jobs/depositExpiryJob';
 import './jobs/fx-rate-sync.queue';
 
 async function bootstrap() {
+  initObservability();
+
   const app = createApp();
 
-  // Validate required env for runtime startup.
   void env;
 
   await AppDataSource.initialize();
+
+  startAnomalyDetectionJob();
+  startApiMetricsMaintenanceJob();
 
   const port = process.env.PORT || env.PORT || 3000;
   app.listen(Number(port), '0.0.0.0', () => {
@@ -26,4 +32,3 @@ bootstrap().catch((err) => {
   console.error('Failed to start server', err);
   process.exit(1);
 });
-

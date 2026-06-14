@@ -6,7 +6,8 @@ import request from 'supertest';
 import { withTransaction } from '../src/database/transaction';
 import { Currency, DepositStatus, KycStatus, SabitType } from '../src/utils/enums';
 
-import { app, makeAdmin, registerAndLogin, registerVerifiedUser, signAdminToken } from './helpers';
+import { app, makeAdmin, makeSuperAdmin, registerAndLogin, registerVerifiedUser, signAdminToken } from './helpers';
+import { UserRole } from '../src/utils/enums';
 
 describe('All Endpoints Smoke', () => {
   it('covers all mounted endpoint groups', async () => {
@@ -359,5 +360,43 @@ describe('All Endpoints Smoke', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ reason: 'Invalid payment proof.' });
     expect(adminDepReject.status).toBe(200);
+
+    const reliabilitySummary = await request(app)
+      .get('/admin/reliability/summary')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(reliabilitySummary.status).toBe(200);
+
+    const reliabilityUptime = await request(app)
+      .get('/admin/reliability/uptime')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(reliabilityUptime.status).toBe(200);
+
+    const reliabilityEvents = await request(app)
+      .get('/admin/reliability/events')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(reliabilityEvents.status).toBe(200);
+
+    await makeSuperAdmin(adminUser.userId);
+    const superAdminToken = signAdminToken(adminUser.userId, adminUser.name, adminUser.email, UserRole.super_admin);
+
+    const securityMetrics = await request(app)
+      .get('/admin/security/threat-metrics')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(securityMetrics.status).toBe(200);
+
+    const securityEvents = await request(app)
+      .get('/admin/security/events')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(securityEvents.status).toBe(200);
+
+    const auditExtract = await request(app)
+      .get('/admin/security/audit-extract')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(auditExtract.status).toBe(200);
+
+    const permissionMatrix = await request(app)
+      .get('/admin/security/permissions')
+      .set('Authorization', `Bearer ${superAdminToken}`);
+    expect(permissionMatrix.status).toBe(200);
   });
 });

@@ -1,5 +1,8 @@
 import { env } from '../config/env';
+import { recordFxSyncResult } from '../services/anomaly-detector.service';
+import { recordHeartbeat } from '../services/reliability.service';
 import { AppDataSource } from '../database/data-source';
+import { HeartbeatStatus, ReliabilityComponent } from '../utils/observabilityEnums';
 
 const PAIRS: { pair: string; from: string; to: string }[] = [
   { pair: 'GBP/NGN', from: 'GBP', to: 'NGN' },
@@ -10,13 +13,18 @@ const PAIRS: { pair: string; from: string; to: string }[] = [
 /**
  * Fetches latest rates from Open Exchange Rates (USD base) and writes
  * one new row per pair into exchange_rates.
- *
- * Requires FX_API_KEY env var. If absent, the job is a no-op so the
- * app still starts and falls back to the last persisted rates.
  */
 export async function syncFxRates(): Promise<void> {
+  const start = Date.now();
+
   if (!env.FX_API_KEY) {
     console.warn('[fx-rate-sync] FX_API_KEY not set — skipping rate sync');
+    await recordHeartbeat({
+      component: ReliabilityComponent.fx_engine,
+      status: HeartbeatStatus.degraded,
+      latencyMs: Date.now() - start,
+      metadata: { reason: 'FX_API_KEY not set' },
+    });
     return;
   }
 
@@ -27,21 +35,42 @@ export async function syncFxRates(): Promise<void> {
     const res = await fetch(url);
     if (!res.ok) {
       console.error(`[fx-rate-sync] HTTP ${res.status} from OpenExchangeRates`);
+      await recordFxSyncResult(false, `HTTP ${res.status}`);
+      await recordHeartbeat({
+        component: ReliabilityComponent.fx_engine,
+        status: HeartbeatStatus.failed,
+        latencyMs: Date.now() - start,
+        metadata: { httpStatus: res.status },
+      });
       return;
     }
     data = (await res.json()) as { rates: Record<string, number> };
   } catch (err) {
     console.error('[fx-rate-sync] Network error fetching rates:', err);
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordFxSyncResult(false, msg);
+    await recordHeartbeat({
+      component: ReliabilityComponent.fx_engine,
+      status: HeartbeatStatus.failed,
+      latencyMs: Date.now() - start,
+      metadata: { error: msg },
+    });
     return;
   }
 
   const { rates } = data;
   if (!rates?.NGN) {
     console.error('[fx-rate-sync] Unexpected response shape — NGN rate missing');
+    await recordFxSyncResult(false, 'NGN rate missing in response');
+    await recordHeartbeat({
+      component: ReliabilityComponent.fx_engine,
+      status: HeartbeatStatus.failed,
+      latencyMs: Date.now() - start,
+      metadata: { error: 'NGN rate missing' },
+    });
     return;
   }
 
-  // All rates are relative to USD. Derive cross-rates to NGN.
   const computed: Record<string, number> = {
     'GBP/NGN': rates.NGN / (rates.GBP ?? 1),
     'USD/NGN': rates.NGN,
@@ -61,8 +90,23 @@ export async function syncFxRates(): Promise<void> {
       );
     }
     console.log(`[fx-rate-sync] Rates updated at ${new Date().toISOString()}`);
+    await recordFxSyncResult(true);
+    await recordHeartbeat({
+      component: ReliabilityComponent.fx_engine,
+      status: HeartbeatStatus.ok,
+      latencyMs: Date.now() - start,
+      metadata: { pairsUpdated: PAIRS.length },
+    });
   } catch (err) {
     console.error('[fx-rate-sync] DB write error:', err);
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordFxSyncResult(false, msg);
+    await recordHeartbeat({
+      component: ReliabilityComponent.fx_engine,
+      status: HeartbeatStatus.failed,
+      latencyMs: Date.now() - start,
+      metadata: { error: msg },
+    });
   } finally {
     await qr.release();
   }
