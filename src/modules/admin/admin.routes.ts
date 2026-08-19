@@ -3,18 +3,13 @@ import multer from 'multer';
 
 import { adminMiddleware } from '../../middleware/adminMiddleware';
 import { superAdminMiddleware } from '../../middleware/adminMiddleware';
-<<<<<<< HEAD
+import { authMiddleware } from '../../middleware/authMiddleware';
 import { requirePermission } from '../../middleware/permissionMiddleware';
-import { asyncHandler } from '../../utils/asyncHandler';
+import { authRateLimiter } from '../../middleware/rateLimiter';
 import { inviteRateLimiter } from '../../middleware/rateLimiter';
+import { asyncHandler } from '../../utils/asyncHandler';
 import { reliabilityRouter } from '../reliability/reliability.routes';
 import { securityIntelligenceRouter } from '../security-intelligence/security.routes';
-=======
-import { authMiddleware } from '../../middleware/authMiddleware';
-import { inviteRateLimiter } from '../../middleware/rateLimiter';
-import { asyncHandler } from '../../utils/asyncHandler';
-
->>>>>>> f44922bb5a4b99cbe6dc656b9741cf782bafdb1f
 
 import {
   adminLogin,
@@ -58,7 +53,7 @@ export const adminRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // Public Admin Auth
-adminRouter.post('/auth/login', asyncHandler(adminLogin));
+adminRouter.post('/auth/login', authRateLimiter, asyncHandler(adminLogin));
 adminRouter.post('/auth/verify-otp', asyncHandler(adminVerifyOtp));
 adminRouter.post('/auth/resend-otp', asyncHandler(adminResendOtp));
 

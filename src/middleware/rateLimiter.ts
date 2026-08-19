@@ -20,6 +20,7 @@ export const otpRateLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test' && process.env.ENABLE_RATE_LIMIT_IN_TESTS !== 'true',
   handler: (req, res, _next, options) => {
     void onRateLimited(req, 'otp');
     res.status(options.statusCode).json({
@@ -36,6 +37,7 @@ export const inviteRateLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test' && process.env.ENABLE_RATE_LIMIT_IN_TESTS !== 'true',
   handler: (req, res, _next, options) => {
     void onRateLimited(req, 'invite');
     res.status(options.statusCode).json({
@@ -43,6 +45,23 @@ export const inviteRateLimiter = rateLimit({
       data: null,
       meta: {},
       error: { code: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' },
+    });
+  },
+});
+
+export const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test' && process.env.ENABLE_RATE_LIMIT_IN_TESTS !== 'true',
+  handler: (req, res, _next, options) => {
+    void onRateLimited(req, 'auth');
+    res.status(options.statusCode).json({
+      success: false,
+      data: null,
+      meta: {},
+      error: { code: 'RATE_LIMITED', message: 'Too many sign-in attempts. Please try again later.' },
     });
   },
 });

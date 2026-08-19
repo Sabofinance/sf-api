@@ -16,6 +16,7 @@ import { Kyc } from './entities/Kyc';
 import { LedgerEntry } from './entities/LedgerEntry';
 import { Notifications } from './entities/Notifications';
 import { ReliabilityEvent } from './entities/ReliabilityEvent';
+import { RefreshToken } from './entities/RefreshToken';
 import { ReliabilityHeartbeat } from './entities/ReliabilityHeartbeat';
 import { SecurityEvent } from './entities/SecurityEvent';
 import { Sabit } from './entities/Sabit';
@@ -52,6 +53,7 @@ export const AppDataSource = new DataSource({
     IncidentEvent,
     Notifications,
     ReliabilityEvent,
+    RefreshToken,
     ReliabilityHeartbeat,
     SecurityEvent,
     TradeRating,

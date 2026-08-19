@@ -64,6 +64,12 @@ export class User {
   @Column({ type: 'boolean', default: false })
   is_suspended!: boolean;
 
+  @Column({ type: 'int', default: 0 })
+  failed_login_attempts!: number;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  locked_until?: Date | null;
+
   @Column({ type: 'timestamptz', nullable: true })
   deleted_at?: Date | null;
 

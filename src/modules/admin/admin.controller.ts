@@ -16,6 +16,8 @@ import { User } from '../../database/entities/User';
 import { Withdrawal } from '../../database/entities/Withdrawal';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
+import { persistRefreshToken } from '../../services/refreshToken.service';
+import { clearFailedLogins, recordFailedLogin, throwIfLocked } from '../../services/loginLockout.service';
 import { NotificationService } from '../../services/notificationService';
 import { generateUsername } from '../../services/usernameService';
 import { WalletService } from '../../services/walletService';
@@ -106,7 +108,7 @@ export async function adminLogin(req: Request, res: Response) {
 
   const user = await withTransaction(async (qr) => {
     const rows = (await qr.query(
-      `SELECT "id","password_hash","role","email","name","kyc_status","is_suspended","deleted_at" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) LIMIT 1`,
+      `SELECT "id","password_hash","role","email","name","kyc_status","is_suspended","deleted_at","locked_until" FROM "users" WHERE "email" = $1 AND ("role" = $2 OR "role" = $3) LIMIT 1`,
       [input.email.toLowerCase(), UserRole.admin, UserRole.super_admin],
     )) as Array<{
       id: string;
@@ -117,6 +119,7 @@ export async function adminLogin(req: Request, res: Response) {
       kyc_status: string;
       is_suspended: boolean;
       deleted_at: Date | null;
+      locked_until: Date | null;
     }>;
     return rows[0];
   });
@@ -125,10 +128,15 @@ export async function adminLogin(req: Request, res: Response) {
     throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email or password.', 401);
   if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
   if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
+  throwIfLocked(user.locked_until);
 
   const okPass = await bcrypt.compare(input.password, user.password_hash);
-  if (!okPass)
+  if (!okPass) {
+    await recordFailedLogin(user.id, req);
     throw new AppError('INVALID_ADMIN_CREDENTIALS', 'Invalid admin email or password.', 401);
+  }
+
+  await clearFailedLogins(user.id);
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
@@ -209,6 +217,7 @@ export async function adminVerifyOtp(req: Request, res: Response) {
 
   const accessToken = signAdminAccessToken(user);
   const refreshToken = signAdminRefreshToken(user);
+  await persistRefreshToken(user.id, refreshToken);
 
   return ok(res, {
     tokens: { accessToken, refreshToken },

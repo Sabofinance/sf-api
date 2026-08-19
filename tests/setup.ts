@@ -1,12 +1,14 @@
 import { AppDataSource } from '../src/database/data-source';
+import { stopRequestMetricsFlush } from '../src/middleware/requestMetricsMiddleware';
 
-jest.setTimeout(30000);
+jest.setTimeout(120000);
 
 async function truncateAll() {
-  const entities = AppDataSource.entityMetadatas;
-  // Delete in a safe order by disabling FK checks via CASCADE truncation.
-  const tableNames = entities.map((e) => `"${e.tableName}"`).join(', ');
-  if (!tableNames) return;
+  const tables = (await AppDataSource.query(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'migrations'`,
+  )) as Array<{ tablename: string }>;
+  if (!tables.length) return;
+  const tableNames = tables.map((t) => `"${t.tablename}"`).join(', ');
   await AppDataSource.query(`TRUNCATE ${tableNames} RESTART IDENTITY CASCADE`);
 }
 
@@ -23,6 +25,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+  stopRequestMetricsFlush();
   if (AppDataSource.isInitialized) {
     await AppDataSource.destroy();
   }

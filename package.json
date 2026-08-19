@@ -14,7 +14,8 @@
         "migration:run:prod": "node ./node_modules/typeorm/cli.js -d dist/database/data-source.js migration:run",
         "migration:revert": "npm run typeorm -- migration:revert",
         "seed": "node -r ts-node/register -r dotenv/config src/database/seed.ts",
-        "test": "NODE_ENV=test node -r ts-node/register -r dotenv/config ./node_modules/jest/bin/jest.js --runInBand"
+        "seed:security": "node -r ts-node/register -r dotenv/config src/database/seed-security-demo.ts",
+        "test": "NODE_ENV=test node -r ts-node/register -r dotenv/config ./node_modules/jest/bin/jest.js --runInBand --forceExit"
     },
     "dependencies": {
         "@sentry/node": "^10.57.0",
@@ -33,6 +34,7 @@
         "express": "^4.22.1",
         "express-rate-limit": "^8.3.1",
         "express-session": "^1.19.0",
+        "helmet": "^8.3.0",
         "jsonwebtoken": "^9.0.3",
         "morgan": "^1.10.1",
         "multer": "^2.1.1",

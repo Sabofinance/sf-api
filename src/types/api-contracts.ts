@@ -729,3 +729,75 @@ export interface Beneficiary {
   bank_code: string | null;
   created_at: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN SECURITY INTELLIGENCE
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SecuritySeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export type SecurityEventType =
+  | 'auth_failed'
+  | 'invalid_token'
+  | 'expired_token'
+  | 'suspended_account_attempt'
+  | 'forbidden'
+  | 'unauthorized_admin'
+  | 'invalid_otp'
+  | 'otp_replay'
+  | 'otp_rate_limited'
+  | 'webhook_invalid_signature'
+  | 'webhook_replay'
+  | 'webhook_malformed'
+  | 'rate_limited'
+  | 'permission_denied'
+  | 'account_locked'
+  | string;
+
+export interface SecurityEvent {
+  id: string;
+  event_type: string;
+  severity: SecuritySeverity | string;
+  user_id: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  path: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SecurityThreatWindow {
+  from: string;
+  to: string;
+  total: number;
+  high_severity: number;
+  detection_rate: number;
+}
+
+export interface SecurityThreatMetricsResponse {
+  baseline: SecurityThreatWindow;
+  current: SecurityThreatWindow;
+  improvement_pct: number;
+  by_type: Array<{ event_type: string; count: number }>;
+  generated_at: string;
+}
+
+export interface SecurityEventsListResponse {
+  events: SecurityEvent[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface SecurityAuditExtractResponse {
+  admin_logs: Array<Record<string, unknown>>;
+  security_events: Array<Record<string, unknown>>;
+  permission_violations: Array<Record<string, unknown>>;
+  from: string;
+  to: string;
+  generated_at: string;
+}
+
+export interface PermissionMatrixResponse {
+  matrix: Array<{ permission: string; roles: UserRole[] }>;
+}

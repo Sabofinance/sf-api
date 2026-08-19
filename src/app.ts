@@ -2,6 +2,7 @@ import 'reflect-metadata';
 
 import cors from 'cors';
 import express from 'express';
+import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 
 import { env } from './config/env';
@@ -14,6 +15,14 @@ import { apiRouter } from './routes';
 
 export function createApp() {
   const app = express();
+
+  app.use(
+    helmet({
+      // Swagger UI needs inline scripts; keep CSP off for the API docs surface.
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
 
   const corsOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
   app.use(cors({

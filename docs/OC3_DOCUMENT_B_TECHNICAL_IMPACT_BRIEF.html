@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OC3 Document B — Technical Impact Brief — Sabo Finance</title>
+  <style>
+    @page { size: A4; margin: 16mm 16mm 18mm 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Times New Roman", Times, serif;
+      font-size: 11pt;
+      line-height: 1.28;
+      color: #111;
+      max-width: 210mm;
+      margin: 0 auto;
+      padding: 12mm;
+    }
+    h1 { font-size: 14pt; margin: 0 0 6pt; letter-spacing: 0.02em; }
+    h2 { font-size: 11.5pt; margin: 11pt 0 5pt; border-bottom: 0.6pt solid #222; padding-bottom: 2pt; }
+    p, li { margin: 0 0 5pt; }
+    .meta { font-size: 9.5pt; color: #333; margin-bottom: 10pt; }
+    .meta strong { color: #111; }
+    table { width: 100%; border-collapse: collapse; font-size: 9.5pt; margin: 6pt 0 8pt; }
+    th, td { border: 0.4pt solid #555; padding: 3pt 5pt; vertical-align: top; text-align: left; }
+    th { background: #f0f0f0; }
+    pre {
+      font-family: "Courier New", monospace;
+      font-size: 8pt;
+      line-height: 1.2;
+      background: #f7f7f7;
+      border: 0.4pt solid #ccc;
+      padding: 6pt 8pt;
+      white-space: pre;
+      margin: 6pt 0 8pt;
+    }
+    .footer { font-size: 9pt; margin-top: 10pt; }
+    .hint { font-size: 9pt; color: #444; margin-bottom: 12pt; }
+    @media print {
+      body { padding: 0; }
+      .hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <p class="hint"><strong>Print this file to PDF</strong> (A4): Chrome → Print → Destination: Save as PDF → Margins: Default. Target length: <strong>3 pages</strong>. Replace <em>[Legal name]</em> before submitting. Do not reuse this file for another Tech Nation criterion.</p>
+
+  <h1>Technical Impact Brief</h1>
+  <p class="meta">
+    <strong>Product:</strong> Sabo Finance (sf-api) — P2P multi-currency exchange<br />
+    <strong>Document:</strong> B &nbsp;|&nbsp; <strong>Criterion:</strong> Optional Criterion 3 (significant technical contribution)<br />
+    <strong>Author:</strong> [Legal name], Backend / security engineer &nbsp;|&nbsp; <strong>Period:</strong> March 2026 – August 2026<br />
+    <strong>Date of brief:</strong> 19 August 2026
+  </p>
+  <p>This brief describes <strong>my personal technical contribution</strong> to a product-led digital company. It is not a company marketing document.</p>
+
+  <h2>1. Product context</h2>
+  <p>Sabo Finance lets users hold and move <strong>NGN, GBP, USD, and CAD</strong>. Settlement is <strong>internal only</strong>: users fund Sabo wallets; there are no user-to-user bank payments. Every financial movement must create an <strong>append-only ledger</strong> row. Wallet balances may be changed only through <code>WalletService</code> inside a TypeORM transaction.</p>
+  <p>The engineering problem I owned is <strong>integrity under attack</strong>: forged payment webhooks, stolen JWTs, privilege escalation, unverified trading, and duplicate settlement must fail closed and remain attributable.</p>
+
+  <h2>2. Architecture (security-critical path)</h2>
+<pre>Client → Bearer JWT → authMiddleware (live user: suspended/deleted)
+       → requireVerifiedUser (KYC) → deposits / trades / withdrawals
+       → adminMiddleware + requirePermission() → /admin/*
+
+WalletService (FOR UPDATE) → wallets + ledger INSERT (never UPDATE ledger)
+
+Flutterwave → verif-hash (timing-safe) → amount/currency → replay guard
+           → security_events → threat score → GET /admin/security/*</pre>
+  <p><strong>Invariant:</strong> if any financial step fails, the QueryRunner rolls back. Partial wallet writes are not permitted.</p>
+
+  <h2>3. Personal contributions</h2>
+  <table>
+    <tr><th>#</th><th>What I decided and shipped</th><th>Artefact</th></tr>
+    <tr><td>1</td><td>Single wallet mutation path; ledger <code>balance_before</code>/<code>balance_after</code>; row locks</td><td><code>src/services/walletService.ts</code></td></tr>
+    <tr><td>2</td><td>Webhook authenticity via <code>verif-hash</code> + <code>timingSafeEqual</code>; no credit on failure; HTTP 200 to provider</td><td><code>FlutterwaveProvider.ts</code>, deposits webhook</td></tr>
+    <tr><td>3</td><td>Amount/currency match; completed deposit replay does not double-credit</td><td>deposits controller</td></tr>
+    <tr><td>4</td><td>KYC gate on money-moving routes</td><td><code>kycMiddleware.ts</code></td></tr>
+    <tr><td>5</td><td>Admin least privilege via permission matrix</td><td><code>permissionMatrix.ts</code></td></tr>
+    <tr><td>6</td><td>Security event pipeline and admin threat APIs</td><td><code>securityEvent.service.ts</code>, security-intelligence module</td></tr>
+    <tr><td>7</td><td>Helmet; auth rate limits; login lockout; hashed refresh tokens revoked on logout/password reset</td><td>auth hardening, migration <code>1775260000000</code></td></tr>
+    <tr><td>8</td><td>Adversarial automated tests for the above</td><td><code>tests/security.test.ts</code></td></tr>
+  </table>
+  <p>JWT and bcrypt are used as industry standard. They are <strong>not</strong> claimed as the contribution. The contribution is the <strong>financial integrity model and the controls around it</strong>.</p>
+
+  <h2>4. Outcomes</h2>
+  <p><strong>Tests (August 2026):</strong> <code>npm test -- tests/security.test.ts</code> — <strong>8 passed / 8 total</strong>. Demonstrated: invalid JWT rejected; non-admin blocked from <code>/admin/users</code>; unverified KYC cannot initiate NGN deposits; invalid webhook signature does not credit; amount mismatch does not credit; replay does not double-credit; logout revokes refresh tokens; lockout after failed logins; weak passwords rejected.</p>
+  <p><strong>Commercial metrics</strong> (users, GMV) are omitted because they are not independently published in this document. Operator APIs exist: <code>GET /admin/security/threat-metrics</code>, <code>GET /admin/security/events</code>, <code>GET /health</code>. A redacted dashboard screenshot may be submitted as a <em>separate</em> image if allowed; it is not part of this three-page text.</p>
+  <p><strong>14 June 2026:</strong> reliability and security-intelligence subsystem completed (in-repo <code>docs/RELIABILITY_SECURITY_REPORT.md</code>).</p>
+
+  <h2>5. Dated source evidence</h2>
+  <table>
+    <tr><th>Date</th><th>Commit</th><th>Recorded subject</th></tr>
+    <tr><td>2026-03-17</td><td><code>ab3223a</code></td><td>Initial commit</td></tr>
+    <tr><td>2026-03-19</td><td><code>8108e44</code></td><td>Withdrawal, admin, security, exchange engine</td></tr>
+    <tr><td>2026-03-26</td><td><code>2b4b13c</code></td><td>Governance, errors, email templates</td></tr>
+    <tr><td>2026-04-02</td><td><code>f830b66</code></td><td>Completed backend logic</td></tr>
+    <tr><td>2026-06-14</td><td><code>dfd1e11</code></td><td>Anomaly detection / security intelligence</td></tr>
+  </table>
+  <p>August 2026 hardening lives in <code>src/services/refreshToken.service.ts</code>, <code>loginLockout.service.ts</code>, <code>tests/security.test.ts</code>, and migration <code>1775260000000-AddAuthHardening.ts</code>. Commit that tree before submission and add the hash on this table.</p>
+
+  <h2>6. Before / after</h2>
+  <table>
+    <tr><th>Risk</th><th>Control I implemented</th></tr>
+    <tr><td>Ad hoc wallet updates</td><td>Only <code>WalletService</code> + ledger insert in one transaction</td></tr>
+    <tr><td>Trusting webhook JSON</td><td>Signature + amount/currency + replay</td></tr>
+    <tr><td>JWT without account state</td><td>Live DB check for suspension/deletion</td></tr>
+    <tr><td>Coarse admin access</td><td>Permission matrix; <code>security.view</code> is super-admin</td></tr>
+    <tr><td>Logout = delete token in browser</td><td>Server-side refresh-token revocation</td></tr>
+    <tr><td>Unlimited password guesses</td><td>Lockout + <code>account_locked</code> event</td></tr>
+  </table>
+
+  <p class="footer"><strong>Declaration.</strong> The contributions listed are my own technical work on Sabo Finance. I have not claimed commercial figures that I cannot cite.</p>
+  <p class="footer">Signature: ______________________________ &nbsp;&nbsp; Date: 19 August 2026</p>
+</body>
+</html>

@@ -46,6 +46,7 @@ export enum SecurityEventType {
   webhook_malformed = 'webhook_malformed',
   rate_limited = 'rate_limited',
   permission_denied = 'permission_denied',
+  account_locked = 'account_locked',
 }
 
 export enum SecuritySeverity {

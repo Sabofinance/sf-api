@@ -13,6 +13,7 @@
 > - The token refresh endpoint is `POST /auth/refresh-token` (NOT `/auth/refresh`)
 > - Bids are **counter-offers on SELL sabits only** and require a PIN. Accepting a bid immediately settles the trade (no separate seller-confirm step).
 > - Standard trades (via `POST /trades/initiate`) go into `escrowed` status and require `PUT /trades/:id/seller-confirm` with a PIN within **30 minutes** before the trade auto-cancels.
+> - Super-admin **security** APIs: `/admin/security/*` — copy `FRONTEND_ADMIN_SECURITY.md` into the frontend repo.
 
 
 This document is the single source of truth for integrating the frontend admin portal (and any user-facing clients) with the Sabo Finance backend API.
@@ -21,6 +22,7 @@ This document is the single source of truth for integrating the frontend admin p
 
 ## Table of Contents
 
+0. [Admin security (copy this to the frontend repo)](FRONTEND_ADMIN_SECURITY.md)
 1. [Base URL & Environments](#1-base-url--environments)
 2. [API Response Envelope](#2-api-response-envelope)
 3. [Authentication Flow](#3-authentication-flow)
@@ -352,6 +354,29 @@ Super admins see all logs; regular admins see only their own.
 | Last 4 weeks | `granularity=week` | 4 week buckets (Week 1–4 labels) |
 | Last 12 months | `granularity=month` | 12 month buckets (Jan 26… labels) |
 | Custom range | `granularity=day|week|month&from=<ISO>&to=<ISO>` | variable |
+
+### 5.10 Security intelligence [SA only]
+
+Requires **`role = super_admin`** (`security.view`). Regular `admin` tokens receive **403** `FORBIDDEN` (`Missing permission: security.view`).
+
+These routes are documented in full for the frontend repo in **`FRONTEND_ADMIN_SECURITY.md`**. Summary:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/admin/security/threat-metrics` | Baseline vs current window counts, high-severity rate, `by_type` |
+| GET | `/admin/security/events` | Paginated `security_events` (`page`, `limit`, optional `severity`) |
+| GET | `/admin/security/audit-extract` | Admin logs + security events (+ CSV via `format=csv`) |
+| GET | `/admin/security/permissions` | Role × permission matrix |
+
+Default threat-metrics windows: **current** = last 30 days, **baseline** = the 30 days before that. Optional ISO-8601 query params (must include a timezone offset, e.g. `...Z`): `baseline_from`, `current_from`, `to`.
+
+Populate a local/staging dashboard with **synthetic** events (tagged `details.synthetic === true`):
+
+```
+npm run seed:security
+```
+
+Do not treat that seed as organic production attack history.
 
 ---
 
@@ -1520,6 +1545,10 @@ Key types to import:
 ```typescript
 import type {
   ApiResponse,
+  SecurityThreatMetricsResponse,
+  SecurityEventsListResponse,
+  SecurityAuditExtractResponse,
+  PermissionMatrixResponse,
   MetricsAnalyticsResponse,
   AdminDashboardResponse,
   ImpactAnalyticsResponse,
@@ -1614,6 +1643,9 @@ Suggested page structure for the admin portal:
   /transactions       → GET /admin/transactions (ledger view)
   /admins             → GET /admin/admins [SA] + invite/remove/upgrade
   /logs               → GET /admin/logs
+  /security           → GET /admin/security/threat-metrics + events [SA]
+  /security/audit     → GET /admin/security/audit-extract [SA] (JSON or CSV)
+  /security/permissions → GET /admin/security/permissions [SA]
   /profile            → GET /admin/profile + picture upload
 ```
 

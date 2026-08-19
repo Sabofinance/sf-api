@@ -18,6 +18,7 @@ function scheduleFlush(): void {
   flushTimer = setInterval(() => {
     void flushMetrics();
   }, 10000);
+  flushTimer.unref();
 }
 
 async function flushMetrics(): Promise<void> {
@@ -66,4 +67,11 @@ export function requestMetricsMiddleware(req: Request, res: Response, next: Next
 
 export async function flushPendingMetrics(): Promise<void> {
   await flushMetrics();
+}
+
+export function stopRequestMetricsFlush(): void {
+  if (flushTimer) {
+    clearInterval(flushTimer);
+    flushTimer = null;
+  }
 }

@@ -38,6 +38,22 @@ function toCsv(rows: Array<Record<string, unknown>>, columns: string[]): string 
   return [header, ...lines].join('\n');
 }
 
+/**
+ * @swagger
+ * /admin/security/threat-metrics:
+ *   get:
+ *     summary: Security threat metrics (super_admin)
+ *     tags: [Admin Security]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ *         content:
+ *           application/json:
+ *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
+ *       403:
+ *         description: Missing security.view permission
+ */
 export async function getSecurityThreatMetrics(req: Request, res: Response) {
   const query = threatMetricsQuerySchema.parse(req.query);
   const to = query.to ?? new Date().toISOString();
@@ -53,31 +69,64 @@ export async function getSecurityThreatMetrics(req: Request, res: Response) {
   });
 }
 
+/**
+ * @swagger
+ * /admin/security/events:
+ *   get:
+ *     summary: List security events (super_admin)
+ *     tags: [Admin Security]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ */
 export async function listSecurityEvents(req: Request, res: Response) {
   const query = eventsQuerySchema.parse(req.query);
   const offset = (query.page - 1) * query.limit;
 
-  const events = await withTransaction(async (qr) => {
-    const params: unknown[] = [query.limit, offset];
+  const { events, total } = await withTransaction(async (qr) => {
+    const listParams: unknown[] = [query.limit, offset];
+    const countParams: unknown[] = [];
     let where = '';
     if (query.severity) {
-      where = 'WHERE "severity" = $3';
-      params.push(query.severity);
+      where = 'WHERE "severity" = $1';
+      countParams.push(query.severity);
+      listParams.push(query.severity);
     }
 
-    return (await qr.query(
+    const countSql = `SELECT COUNT(*)::int AS n FROM "security_events" ${
+      query.severity ? 'WHERE "severity" = $1' : ''
+    }`;
+    const countRows = (await qr.query(countSql, countParams)) as Array<{ n: number }>;
+    const total = Number(countRows[0]?.n ?? 0);
+
+    const listWhere = query.severity ? 'WHERE "severity" = $3' : '';
+    const rows = (await qr.query(
       `SELECT "id","event_type","severity","user_id","ip_address","user_agent","path","details","created_at"
        FROM "security_events"
-       ${where}
+       ${listWhere}
        ORDER BY "created_at" DESC
        LIMIT $1 OFFSET $2`,
-      params,
+      listParams,
     )) as Array<Record<string, unknown>>;
+
+    return { events: rows, total };
   });
 
-  return ok(res, { events, page: query.page, limit: query.limit });
+  return ok(res, { events, total, page: query.page, limit: query.limit });
 }
 
+/**
+ * @swagger
+ * /admin/security/audit-extract:
+ *   get:
+ *     summary: Audit extract of admin logs and security events (super_admin)
+ *     tags: [Admin Security]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ */
 export async function getSecurityAuditExtract(req: Request, res: Response) {
   const query = auditExtractQuerySchema.parse(req.query);
   const to = query.to ?? new Date().toISOString();
@@ -123,6 +172,17 @@ export async function getSecurityAuditExtract(req: Request, res: Response) {
   return ok(res, { ...extract, from, to, generated_at: new Date().toISOString() });
 }
 
+/**
+ * @swagger
+ * /admin/security/permissions:
+ *   get:
+ *     summary: Export role permission matrix (super_admin)
+ *     tags: [Admin Security]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ */
 export async function getPermissionMatrixHandler(_req: Request, res: Response) {
   return ok(res, { matrix: getPermissionMatrix() });
 }

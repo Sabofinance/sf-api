@@ -33,6 +33,7 @@ export function createSwaggerSpec() {
         { name: 'Company Rates' },
         { name: 'Notifications' },
         { name: 'Admin' },
+        { name: 'Admin Security' },
       ],
       components: {
         securitySchemes: {

@@ -9,6 +9,8 @@ import { Strategy as GoogleStrategy, Profile, VerifyCallback } from 'passport-go
 import { env } from '../../config/env';
 import { withTransaction } from '../../database/transaction';
 import { sendEmail } from '../../services/emailService';
+import { persistRefreshToken, revokeAllRefreshTokens, assertRefreshTokenActive, revokeRefreshToken } from '../../services/refreshToken.service';
+import { clearFailedLogins, recordFailedLogin, throwIfLocked } from '../../services/loginLockout.service';
 import { recordSecurityEvent } from '../../services/securityEvent.service';
 import { NotificationService } from '../../services/notificationService';
 import { generateUsername } from '../../services/usernameService';
@@ -19,11 +21,18 @@ import { SecurityEventType } from '../../utils/observabilityEnums';
 
 
 
+const passwordSchema = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .regex(/[A-Z]/, 'Password must include an uppercase letter')
+  .regex(/[a-z]/, 'Password must include a lowercase letter')
+  .regex(/[0-9]/, 'Password must include a number');
+
 const registerSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
   phone: z.string().min(7).max(32),
-  password: z.string().min(8),
+  password: passwordSchema,
 });
 
 const loginSchema = z.object({
@@ -37,7 +46,7 @@ const forgotPasswordSchema = z.object({
 
 const resetPasswordSchema = z.object({
   token: z.string(),
-  password: z.string().min(8),
+  password: passwordSchema,
 });
 
 const refreshTokenSchema = z.object({
@@ -71,19 +80,31 @@ function signRefreshToken(user: { id: string; name: string; email: string; role:
  *         description: Redirect to Google login page
  */
 export function googleInitiate(req: Request, res: Response) {
+  if (!isGoogleOAuthConfigured()) {
+    throw new AppError(
+      'GOOGLE_OAUTH_NOT_CONFIGURED',
+      'Google sign-in is not configured on this server. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.',
+      503,
+    );
+  }
   passport.authenticate('google', {
     scope: ['profile', 'email'],
     prompt: 'select_account', // Optional: forces account selection (good UX)
   })(req, res);
 }
 
+function isGoogleOAuthConfigured(): boolean {
+  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+}
+
 // ====================== GOOGLE PASSPORT STRATEGY ======================
+if (isGoogleOAuthConfigured()) {
 passport.use(
   new GoogleStrategy(
     {
-      clientID: env.GOOGLE_CLIENT_ID!,           // ← Use env, not process.env
-      clientSecret: env.GOOGLE_CLIENT_SECRET!,
-      callbackURL: `${env.API_BASE_URL}/auth/google/callback`,
+      clientID: env.GOOGLE_CLIENT_ID as string,
+      clientSecret: env.GOOGLE_CLIENT_SECRET as string,
+      callbackURL: `${env.API_BASE_URL ?? 'http://localhost:3001'}/auth/google/callback`,
       scope: ['profile', 'email'],
     },
     async (
@@ -196,8 +217,7 @@ passport.use(
     }
   )
 );
-
-
+}
 
 /**
  * @swagger
@@ -293,6 +313,7 @@ export async function register(req: Request, res: Response) {
 
   const accessToken = signAccessToken(user);
   const refreshToken = signRefreshToken(user);
+  await persistRefreshToken(user.id, refreshToken);
 
   return created(res, { user, tokens: { accessToken, refreshToken } });
 }
@@ -447,6 +468,7 @@ export async function googleSignup(req: Request, res: Response) {
 
   const accessToken = signAccessToken(user);
   const refreshToken = signRefreshToken(user);
+  await persistRefreshToken(user.id, refreshToken);
 
   return created(res, {
     user,
@@ -463,6 +485,10 @@ export async function googleSignup(req: Request, res: Response) {
  *     description: Google redirects here after authentication
  */
 export async function googleCallback(req: Request, res: Response) {
+  if (!isGoogleOAuthConfigured()) {
+    const frontendErrorUrl = `${env.WEBSITE_URL ?? 'https://sabofinance.com'}/auth/callback?error=google_not_configured`;
+    return res.redirect(frontendErrorUrl);
+  }
   passport.authenticate('google', { session: false }, async (err: any, user: any) => {
     if (err || !user) {
       const frontendErrorUrl = `${env.WEBSITE_URL ?? 'https://sabofinance.com'}/auth/callback?error=google_auth_failed`;
@@ -472,6 +498,7 @@ export async function googleCallback(req: Request, res: Response) {
     try {
       const accessToken = signAccessToken(user);
       const refreshToken = signRefreshToken(user);
+      await persistRefreshToken(user.id, refreshToken);
 
       const frontendUrl = env.WEBSITE_URL ?? 'https://sabofinance.com';
 
@@ -572,17 +599,38 @@ export async function login(req: Request, res: Response) {
 
   const rows = (await withTransaction(async (qr) => {
     return (await qr.query(
-      `SELECT "id","password_hash","role","email","name","kyc_status","is_suspended","deleted_at" FROM "users" WHERE "email" = $1 LIMIT 1`,
+      `SELECT "id","password_hash","role","email","name","kyc_status","is_suspended","deleted_at","failed_login_attempts","locked_until" FROM "users" WHERE "email" = $1 LIMIT 1`,
       [input.email.toLowerCase()],
-    )) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; }>;
-  })) as Array<{ id: string; password_hash: string; role: UserRole; email: string; name: string; kyc_status: string; }>;
+    )) as Array<{
+      id: string;
+      password_hash: string;
+      role: UserRole;
+      email: string;
+      name: string;
+      kyc_status: string;
+      is_suspended?: boolean;
+      deleted_at?: Date | null;
+      failed_login_attempts?: number;
+      locked_until?: Date | null;
+    }>;
+  })) as Array<{
+    id: string;
+    password_hash: string;
+    role: UserRole;
+    email: string;
+    name: string;
+    kyc_status: string;
+    is_suspended?: boolean;
+    deleted_at?: Date | null;
+    locked_until?: Date | null;
+  }>;
 
   const user = rows[0];
   if (!user) {
     void recordSecurityEvent({ eventType: SecurityEventType.auth_failed, req, details: { email: input.email } });
     throw new UnauthorizedError('Invalid email or password.', 'INVALID_CREDENTIALS');
   }
-  if ((user as unknown as { is_suspended?: boolean; deleted_at?: Date | null }).deleted_at) {
+  if (user.deleted_at) {
     void recordSecurityEvent({
       eventType: SecurityEventType.suspended_account_attempt,
       req,
@@ -591,7 +639,7 @@ export async function login(req: Request, res: Response) {
     });
     throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
   }
-  if ((user as unknown as { is_suspended?: boolean }).is_suspended) {
+  if (user.is_suspended) {
     void recordSecurityEvent({
       eventType: SecurityEventType.suspended_account_attempt,
       req,
@@ -601,11 +649,16 @@ export async function login(req: Request, res: Response) {
     throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
   }
 
+  throwIfLocked(user.locked_until);
+
   const okPass = await bcrypt.compare(input.password, user.password_hash);
   if (!okPass) {
     void recordSecurityEvent({ eventType: SecurityEventType.auth_failed, req, userId: user.id });
+    await recordFailedLogin(user.id, req);
     throw new UnauthorizedError('Invalid email or password.', 'INVALID_CREDENTIALS');
   }
+
+  await clearFailedLogins(user.id);
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const otp_expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
@@ -696,6 +749,7 @@ export async function verifyOtp(req: Request, res: Response) {
 
   const accessToken = signAccessToken(user);
   const refreshToken = signRefreshToken(user);
+  await persistRefreshToken(user.id, refreshToken);
 
   return ok(res, { tokens: { accessToken, refreshToken } });
 }
@@ -770,7 +824,7 @@ export async function resendOtp(req: Request, res: Response) {
  * @swagger
  * /auth/logout:
  *   post:
- *     summary: Logout (client-side token discard)
+ *     summary: Logout and revoke refresh tokens
  *     tags: [Auth]
  *     security: [{ BearerAuth: [] }]
  *     responses:
@@ -780,7 +834,13 @@ export async function resendOtp(req: Request, res: Response) {
  *           application/json:
  *             schema: { $ref: "#/components/schemas/ApiSuccessEnvelope" }
  */
-export async function logout(_req: Request, res: Response) {
+export async function logout(req: Request, res: Response) {
+  if (!req.user) throw new UnauthorizedError();
+  const body = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {});
+  if (body.refreshToken) {
+    await revokeRefreshToken(body.refreshToken);
+  }
+  await revokeAllRefreshTokens(req.user.id);
   return ok(res, { loggedOut: true });
 }
 
@@ -946,8 +1006,12 @@ export async function resetPassword(req: Request, res: Response) {
   await withTransaction(async (qr) => {
     await qr.query(
       'UPDATE "users" SET "password_hash" = $1, "password_reset_token" = NULL, "password_reset_expires" = NULL WHERE "id" = $2',
-      [password_hash, user.id,
-      ]);
+      [password_hash, user.id],
+    );
+    await qr.query(
+      `UPDATE "refresh_tokens" SET "revoked_at" = NOW() WHERE "user_id" = $1 AND "revoked_at" IS NULL`,
+      [user.id],
+    );
 
     const notificationService = new NotificationService();
     await notificationService.createNotification({
@@ -1022,6 +1086,8 @@ export async function refreshToken(req: Request, res: Response) {
       throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token payload is invalid', 401);
     }
 
+    await assertRefreshTokenActive(input.refreshToken);
+
     // Optional: verify user exists
     const user = await withTransaction(async (qr) => {
       const rows = (await qr.query(
@@ -1035,12 +1101,15 @@ export async function refreshToken(req: Request, res: Response) {
     if (user.deleted_at) throw new AppError('ACCOUNT_DELETED', 'This account has been deleted.', 401);
     if (user.is_suspended) throw new AppError('ACCOUNT_SUSPENDED', 'This account is suspended.', 401);
 
-    // Issue new tokens
+    // Issue new tokens (rotation: revoke the presented refresh token)
+    await revokeRefreshToken(input.refreshToken);
     const newAccessToken = signAccessToken(user);
     const newRefreshToken = signRefreshToken(user);
+    await persistRefreshToken(user.id, newRefreshToken);
 
     return ok(res, { tokens: { accessToken: newAccessToken, refreshToken: newRefreshToken } });
-  } catch {
+  } catch (err) {
+    if (err instanceof AppError) throw err;
     throw new AppError('INVALID_REFRESH_TOKEN', 'Refresh token is invalid or expired. Sign in again to obtain new tokens.', 401);
   }
 }
