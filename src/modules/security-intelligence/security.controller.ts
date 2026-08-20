@@ -2,7 +2,11 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import { getPermissionMatrix } from '../../security/permissionMatrix';
-import { getThreatMetrics, recordSecurityEvent } from '../../services/securityEvent.service';
+import { getThreatMetrics } from '../../services/securityEvent.service';
+import {
+  computePlatformKpis,
+  listPlatformKpiSnapshots,
+} from '../../services/platformKpi.service';
 import { withTransaction } from '../../database/transaction';
 import { ok } from '../../utils/apiResponse';
 
@@ -22,6 +26,20 @@ const auditExtractQuerySchema = z.object({
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
   format: z.enum(['json', 'csv']).default('json'),
+});
+
+const platformKpisQuerySchema = z.object({
+  baseline_from: z.string().datetime({ offset: true }).optional(),
+  current_from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  persist: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
+  synthetic: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 function toCsv(rows: Array<Record<string, unknown>>, columns: string[]): string {
@@ -187,4 +205,47 @@ export async function getPermissionMatrixHandler(_req: Request, res: Response) {
   return ok(res, { matrix: getPermissionMatrix() });
 }
 
-// Re-export for instrumentation from other modules - removed, use services/securityEvent.service directly
+/**
+ * @swagger
+ * /admin/security/platform-kpis:
+ *   get:
+ *     summary: Platform KPIs (uptime, detection improvement, neutralized intrusions, closed controls)
+ *     tags: [Admin Security]
+ *     security: [{ BearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: persist
+ *         schema: { type: string, enum: [true, false] }
+ *         description: Persist a snapshot row when true
+ *     responses:
+ *       200:
+ *         description: OK
+ */
+export async function getPlatformKpisHandler(req: Request, res: Response) {
+  const query = platformKpisQuerySchema.parse(req.query);
+  const kpis = await computePlatformKpis({
+    baselineFrom: query.baseline_from,
+    currentFrom: query.current_from,
+    to: query.to,
+    persist: query.persist,
+    synthetic: query.synthetic,
+  });
+  return ok(res, kpis);
+}
+
+/**
+ * @swagger
+ * /admin/security/platform-kpis/snapshots:
+ *   get:
+ *     summary: List recent platform KPI snapshots
+ *     tags: [Admin Security]
+ *     security: [{ BearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: OK
+ */
+export async function listPlatformKpiSnapshotsHandler(req: Request, res: Response) {
+  const limit = z.coerce.number().int().min(1).max(100).default(20).parse(req.query.limit ?? 20);
+  const snapshots = await listPlatformKpiSnapshots(limit);
+  return ok(res, { snapshots });
+}

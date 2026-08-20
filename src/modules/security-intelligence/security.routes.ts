@@ -7,8 +7,10 @@ import { asyncHandler } from '../../utils/asyncHandler';
 
 import {
   getPermissionMatrixHandler,
+  getPlatformKpisHandler,
   getSecurityAuditExtract,
   getSecurityThreatMetrics,
+  listPlatformKpiSnapshotsHandler,
   listSecurityEvents,
 } from './security.controller';
 
@@ -35,4 +37,14 @@ securityIntelligenceRouter.get(
   '/permissions',
   requirePermission('security.view'),
   asyncHandler(getPermissionMatrixHandler),
+);
+securityIntelligenceRouter.get(
+  '/platform-kpis',
+  requirePermission('security.view'),
+  asyncHandler(getPlatformKpisHandler),
+);
+securityIntelligenceRouter.get(
+  '/platform-kpis/snapshots',
+  requirePermission('security.view'),
+  asyncHandler(listPlatformKpiSnapshotsHandler),
 );

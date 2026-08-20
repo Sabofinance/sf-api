@@ -801,3 +801,27 @@ export interface SecurityAuditExtractResponse {
 export interface PermissionMatrixResponse {
   matrix: Array<{ permission: string; roles: UserRole[] }>;
 }
+
+export interface PlatformKpisResponse {
+  period: {
+    baseline_from: string;
+    baseline_to: string;
+    current_from: string;
+    current_to: string;
+  };
+  uptime_30d_pct: number;
+  transaction_success_pct: number;
+  detection_improvement_pct: number;
+  detection_method: 'disposition_precision' | 'high_severity_share';
+  intrusions_neutralized: number;
+  vulnerability_gaps_closed: number;
+  definitions: Record<string, string>;
+  breakdown: Record<string, unknown>;
+  synthetic: boolean;
+  generated_at: string;
+  snapshot_id?: string;
+}
+
+export interface PlatformKpiSnapshotsResponse {
+  snapshots: Array<Record<string, unknown>>;
+}

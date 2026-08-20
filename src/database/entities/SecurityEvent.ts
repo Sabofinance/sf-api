@@ -31,6 +31,10 @@ export class SecurityEvent {
   @Column({ type: 'jsonb', default: {} })
   details!: Record<string, unknown>;
 
+  /** confirmed | false_positive | ignored — required for precision-based detection KPI */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  disposition!: string | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   created_at!: Date;
 }
