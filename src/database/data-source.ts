@@ -12,9 +12,11 @@ import { CompanyRate } from './entities/CompanyRate';
 import { Kyc } from './entities/Kyc';
 import { LedgerEntry } from './entities/LedgerEntry';
 import { Notifications } from './entities/Notifications';
+import { PlatformKpiSnapshot } from './entities/PlatformKpiSnapshot';
 import { ReliabilityEvent } from './entities/ReliabilityEvent';
 import { RefreshToken } from './entities/RefreshToken';
 import { ReliabilityHeartbeat } from './entities/ReliabilityHeartbeat';
+import { SecurityControlClosure } from './entities/SecurityControlClosure';
 import { SecurityEvent } from './entities/SecurityEvent';
 import { AdminInvite } from './entities/AdminInvite';
 import { Sabit } from './entities/Sabit';
@@ -58,9 +60,11 @@ export const AppDataSource = new DataSource({
     Dispute,
     IncidentEvent,
     Notifications,
+    PlatformKpiSnapshot,
     ReliabilityEvent,
     RefreshToken,
     ReliabilityHeartbeat,
+    SecurityControlClosure,
     SecurityEvent,
     TradeRating,
   ],

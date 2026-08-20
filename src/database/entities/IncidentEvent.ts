@@ -28,6 +28,10 @@ export class IncidentEvent {
   @Column({ type: 'text', nullable: true })
   resolution_notes!: string | null;
 
+  /** neutralized | mitigated | false_alarm — used for intrusions_neutralized KPI */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  outcome!: string | null;
+
   @Column({ type: 'jsonb', default: {} })
   details!: Record<string, unknown>;
 

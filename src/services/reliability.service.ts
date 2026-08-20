@@ -113,7 +113,7 @@ export async function calculateUptime(from: string, to: string) {
          COUNT(*) FILTER (WHERE status = 'completed') AS completed,
          COUNT(*) FILTER (WHERE status IN ('completed','failed','rejected','expired','cancelled')) AS terminal
        FROM (
-         SELECT status FROM "deposits" WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
+         SELECT status::text AS status FROM "deposits" WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
          UNION ALL
          SELECT status::text FROM "withdrawals" WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
          UNION ALL
@@ -132,7 +132,7 @@ export async function calculateUptime(from: string, to: string) {
          COUNT(*) FILTER (WHERE status = 'completed') AS completed,
          COUNT(*) AS total
        FROM (
-         SELECT created_at AS bucket, status FROM "deposits" WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
+         SELECT created_at AS bucket, status::text AS status FROM "deposits" WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
          UNION ALL
          SELECT created_at, status::text FROM "withdrawals" WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
          UNION ALL

@@ -185,6 +185,30 @@ On the **API** repo (this one), after migrations:
 
 ```bash
 npm run seed:security
+npm run seed:platform-kpis
 ```
 
-Inserts ~4,200 synthetic `security_events` from mid-2023 through now (growth-biased). Re-run replaces previous demo rows (`details.source = seed_security_demo`).
+- `seed:security` — ~4,200 synthetic `security_events` (dashboard fill).
+- `seed:platform-kpis` — synthetic heartbeats / dispositions / 3 neutralized incidents / 9 control closures so `GET /admin/security/platform-kpis` can show ~99.2% uptime, ~22% detection improvement, 3 intrusions, 9 gaps.
+
+**Caption any KPI screenshot as demonstration / seeded until you run the same endpoint on production with `persist=true` and `synthetic` omitted/false.**
+
+---
+
+## Platform KPIs (letter-aligned metrics)
+
+`GET /admin/security/platform-kpis` (`security.view` / super_admin)
+
+| Field | Formula |
+|-------|---------|
+| `uptime_30d_pct` | ok heartbeats ÷ all heartbeats in current window |
+| `transaction_success_pct` | completed ÷ terminal deposits/withdrawals/trades |
+| `detection_improvement_pct` | relative change in disposition precision (confirmed/(confirmed+false_positive)); fallback = high-severity share change |
+| `intrusions_neutralized` | critical incidents resolved with `outcome=neutralized` in current window |
+| `vulnerability_gaps_closed` | count of `security_control_closures` |
+
+Query: optional `baseline_from`, `current_from`, `to`, `persist=true` (writes `platform_kpi_snapshots`), `synthetic=true` (marks snapshot as demo).
+
+`GET /admin/security/platform-kpis/snapshots` — recent snapshots.
+
+Portal: four KPI cards + definitions tooltip + `generated_at` caption. If `data.synthetic === true`, show a **Demo** badge.
