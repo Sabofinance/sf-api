@@ -85,7 +85,7 @@ Authored as **Ifeoluwa Success** on Sabofinance/sf-api `main`:
 | 2026-06-14 | `a0fc009` | Anomaly detection / reliability / security-intelligence |
 | 2026-06-14 | `bb115c9` | Merge landing that stack |
 | 2026-08-19 | `43871b8` | Auth hardening, security tests, admin contract |
-| 2026-08-20 | `3bfe9a9` | Platform KPI engine, control register, snapshots |
+| 2026-08-20 | `7a414a3` | Platform KPI engine, control register, snapshots |
 
 Report: `docs/RELIABILITY_SECURITY_REPORT.md` (14 June 2026).
 
