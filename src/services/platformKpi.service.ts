@@ -2,7 +2,7 @@ import { withTransaction } from '../database/transaction';
 import { calculateUptime } from './reliability.service';
 import { getThreatMetrics } from './securityEvent.service';
 
-/** Canonical definitions for OC3 / ops — do not change without updating Document B + LORs. */
+/** Canonical KPI definitions — keep in sync with admin security API docs when changing. */
 export const PLATFORM_KPI_DEFINITIONS = {
   uptime_30d_pct:
     'Share of reliability_heartbeats in the window whose status is ok (component availability). Not wall-clock hosting SLA.',
@@ -231,9 +231,14 @@ export async function computePlatformKpis(input: PlatformKpiQuery = {}): Promise
   return result;
 }
 
+function toNumber(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export async function listPlatformKpiSnapshots(limit = 20) {
   return withTransaction(async (qr) => {
-    return (await qr.query(
+    const rows = (await qr.query(
       `SELECT "id","period_from","period_to","uptime_30d_pct","transaction_success_pct",
               "detection_improvement_pct","detection_method","intrusions_neutralized",
               "vulnerability_gaps_closed","synthetic","generated_at"
@@ -242,5 +247,15 @@ export async function listPlatformKpiSnapshots(limit = 20) {
        LIMIT $1`,
       [limit],
     )) as Array<Record<string, unknown>>;
+
+    // pg returns numeric(8,4) as strings; coerce so the portal can format percentages.
+    return rows.map((row) => ({
+      ...row,
+      uptime_30d_pct: toNumber(row.uptime_30d_pct),
+      transaction_success_pct: toNumber(row.transaction_success_pct),
+      detection_improvement_pct: toNumber(row.detection_improvement_pct),
+      intrusions_neutralized: toNumber(row.intrusions_neutralized),
+      vulnerability_gaps_closed: toNumber(row.vulnerability_gaps_closed),
+    }));
   });
 }
