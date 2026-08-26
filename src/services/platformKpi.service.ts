@@ -27,6 +27,8 @@ export interface PlatformKpiQuery {
   persist?: boolean;
   /** Mark snapshot as synthetic (demo seed / non-production). */
   synthetic?: boolean;
+  /** Override generated_at when persisting (seed/demo only). */
+  generatedAt?: string;
 }
 
 export interface PlatformKpiResult {
@@ -168,7 +170,7 @@ export async function computePlatformKpis(input: PlatformKpiQuery = {}): Promise
     detectionImprovementPct = threat.improvement_pct;
   }
 
-  const generatedAt = new Date().toISOString();
+  const generatedAt = input.generatedAt ?? new Date().toISOString();
   const synthetic = Boolean(input.synthetic);
 
   const result: PlatformKpiResult = {
@@ -245,19 +247,34 @@ export async function listPlatformKpiSnapshots(limit = 20) {
               "detection_improvement_pct","detection_method","intrusions_neutralized",
               "vulnerability_gaps_closed","synthetic","generated_at"
        FROM "platform_kpi_snapshots"
-       ORDER BY "generated_at" DESC
+       ORDER BY "period_to" DESC, "generated_at" DESC
        LIMIT $1`,
       [limit],
     )) as Array<Record<string, unknown>>;
 
     // pg returns numeric(8,4) as strings; coerce so the portal can format percentages.
-    return rows.map((row) => ({
-      ...row,
-      uptime_30d_pct: toNumber(row.uptime_30d_pct),
-      transaction_success_pct: toNumber(row.transaction_success_pct),
-      detection_improvement_pct: toNumber(row.detection_improvement_pct),
-      intrusions_neutralized: toNumber(row.intrusions_neutralized),
-      vulnerability_gaps_closed: toNumber(row.vulnerability_gaps_closed),
-    }));
+    return rows.map((row) => {
+      const periodTo = row.period_to instanceof Date ? row.period_to.toISOString() : String(row.period_to ?? '');
+      const periodFrom =
+        row.period_from instanceof Date ? row.period_from.toISOString() : String(row.period_from ?? '');
+      const cut = Date.parse('2025-01-01T00:00:00.000Z');
+      const periodToMs = Date.parse(periodTo);
+      const era =
+        Number.isFinite(periodToMs) && periodToMs < cut ? 'pre_jan_2025' : 'post_jan_2025';
+      const era_label = era === 'pre_jan_2025' ? 'Before architecture' : 'After architecture';
+
+      return {
+        ...row,
+        period_from: periodFrom,
+        period_to: periodTo,
+        uptime_30d_pct: toNumber(row.uptime_30d_pct),
+        transaction_success_pct: toNumber(row.transaction_success_pct),
+        detection_improvement_pct: toNumber(row.detection_improvement_pct),
+        intrusions_neutralized: toNumber(row.intrusions_neutralized),
+        vulnerability_gaps_closed: toNumber(row.vulnerability_gaps_closed),
+        era,
+        era_label,
+      };
+    });
   });
 }

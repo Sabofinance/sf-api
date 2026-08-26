@@ -313,6 +313,7 @@ Definitions tooltip: `data.definitions` (object of metric → explanation string
 
 | Column label | Bind to | Notes |
 |--------------|---------|-------|
+| **Era** (recommended) | `era_label` | `"Before architecture"` / `"After architecture"` (from API) |
 | **Period** (add this) | `period_from` → `period_to` | **Required for before/after.** e.g. `2 Oct 2024 – 31 Dec 2024` vs `27 Jul 2026 – 26 Aug 2026` |
 | Generated | `generated_at` | secondary / smaller text OK |
 | Uptime (30d) | `uptime_30d_pct` | **number** (API coerces); format `%` |
@@ -322,17 +323,31 @@ Definitions tooltip: `data.definitions` (object of metric → explanation string
 | Gaps closed | `vulnerability_gaps_closed` | number |
 | Demo | `synthetic === true` | badge |
 
+API also returns `era`: `'pre_jan_2025' | 'post_jan_2025'`. Snapshots are ordered by `period_to` DESC.
+
+### Architecture presets (backend-supported)
+
+No need to hand-type dates. Call:
+
+```
+GET /admin/security/threat-metrics?preset=architecture_cutover
+GET /admin/security/platform-kpis?preset=architecture_cutover
+GET /admin/security/platform-kpis?preset=pre_architecture
+```
+
+| Preset | Windows |
+|--------|---------|
+| `architecture_cutover` | baseline from `2024-07-01`, current from `2025-01-01`, to now |
+| `pre_architecture` | KPI window ending `2024-12-31` (before cutover) |
+
+Portal: add a select **Last 30 days** | **Pre vs post architecture** that sets `preset=architecture_cutover` (and clears custom dates).
+
 Optional era hint from period end:
 
 ```ts
-function eraLabel(periodTo: string): string | null {
-  const y = new Date(periodTo).getUTCFullYear();
-  if (y < 2025) return 'Before architecture';
-  return 'After architecture';
-}
+// Prefer API fields when present:
+const label = s.era_label ?? (new Date(s.period_to) < new Date('2025-01-01Z') ? 'Before architecture' : 'After architecture');
 ```
-
-Sort is already newest `generated_at` first from the API.
 
 ### E. Quick TypeScript extract
 

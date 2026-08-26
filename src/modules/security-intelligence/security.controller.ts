@@ -20,6 +20,8 @@ const threatMetricsQuerySchema = z.object({
   baseline_from: z.string().datetime({ offset: true }).optional(),
   current_from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
+  /** architecture_cutover: baseline H2 2024 vs current from 2025-01-01 */
+  preset: z.enum(['architecture_cutover']).optional(),
 });
 
 const auditExtractQuerySchema = z.object({
@@ -40,7 +42,24 @@ const platformKpisQuerySchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => v === 'true'),
+  preset: z.enum(['architecture_cutover', 'pre_architecture']).optional(),
 });
+
+function architectureWindows(now = new Date()) {
+  return {
+    baselineFrom: '2024-07-01T00:00:00.000Z',
+    currentFrom: '2025-01-01T00:00:00.000Z',
+    to: now.toISOString(),
+  };
+}
+
+function preArchitectureWindows() {
+  return {
+    baselineFrom: '2024-07-04T00:00:00.000Z',
+    currentFrom: '2024-10-02T00:00:00.000Z',
+    to: '2024-12-31T23:59:59.000Z',
+  };
+}
 
 function toCsv(rows: Array<Record<string, unknown>>, columns: string[]): string {
   const header = columns.join(',');
@@ -74,15 +93,23 @@ function toCsv(rows: Array<Record<string, unknown>>, columns: string[]): string 
  */
 export async function getSecurityThreatMetrics(req: Request, res: Response) {
   const query = threatMetricsQuerySchema.parse(req.query);
-  const to = query.to ?? new Date().toISOString();
-  const currentFrom = query.current_from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const preset =
+    query.preset === 'architecture_cutover' ? architectureWindows() : null;
+  const to = query.to ?? preset?.to ?? new Date().toISOString();
+  const currentFrom =
+    query.current_from ??
+    preset?.currentFrom ??
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   const baselineFrom =
-    query.baseline_from ?? new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    query.baseline_from ??
+    preset?.baselineFrom ??
+    new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
   const metrics = await getThreatMetrics(baselineFrom, currentFrom, currentFrom, to);
 
   return ok(res, {
     ...metrics,
+    preset: query.preset ?? null,
     generated_at: new Date().toISOString(),
   });
 }
@@ -223,14 +250,20 @@ export async function getPermissionMatrixHandler(_req: Request, res: Response) {
  */
 export async function getPlatformKpisHandler(req: Request, res: Response) {
   const query = platformKpisQuerySchema.parse(req.query);
+  const preset =
+    query.preset === 'pre_architecture'
+      ? preArchitectureWindows()
+      : query.preset === 'architecture_cutover'
+        ? architectureWindows()
+        : null;
   const kpis = await computePlatformKpis({
-    baselineFrom: query.baseline_from,
-    currentFrom: query.current_from,
-    to: query.to,
+    baselineFrom: query.baseline_from ?? preset?.baselineFrom,
+    currentFrom: query.current_from ?? preset?.currentFrom,
+    to: query.to ?? preset?.to,
     persist: query.persist,
     synthetic: query.synthetic,
   });
-  return ok(res, kpis);
+  return ok(res, { ...kpis, preset: query.preset ?? null });
 }
 
 /**

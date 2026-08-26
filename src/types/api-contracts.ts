@@ -832,5 +832,19 @@ export interface PlatformKpisResponse {
 }
 
 export interface PlatformKpiSnapshotsResponse {
-  snapshots: Array<Record<string, unknown>>;
+  snapshots: Array<{
+    id: string;
+    period_from: string;
+    period_to: string;
+    uptime_30d_pct: number;
+    transaction_success_pct: number;
+    detection_improvement_pct: number;
+    detection_method: string;
+    intrusions_neutralized: number;
+    vulnerability_gaps_closed: number;
+    synthetic: boolean;
+    generated_at: string;
+    era: 'pre_jan_2025' | 'post_jan_2025';
+    era_label: 'Before architecture' | 'After architecture';
+  }>;
 }

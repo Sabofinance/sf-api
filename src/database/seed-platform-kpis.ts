@@ -323,6 +323,7 @@ async function seedPlatformKpis() {
       to: PRE_TO.toISOString(),
       persist: true,
       synthetic: true,
+      generatedAt: PRE_TO.toISOString(),
     });
     console.log('\n  Pre-2025 snapshot:');
     console.log(`    uptime=${preKpis.uptime_30d_pct} txn=${preKpis.transaction_success_pct}`);
@@ -366,8 +367,17 @@ async function seedPlatformKpis() {
     }
     await insertHeartbeatChunks(qr, hbRows);
     console.log('  post heartbeats  : 1000 (992 ok / 8 failed → ~99.2%)');
+    // Drop any non-demo heartbeats that landed in the window during seeding.
+    await qr.query(
+      `DELETE FROM "reliability_heartbeats"
+       WHERE "created_at" >= NOW() - interval '30 days'
+         AND COALESCE("metadata"->>'source', '') <> $1`,
+      [SOURCE],
+    );
 
     const eventRows: unknown[][] = [];
+    // Keep disposition math (~22% precision improvement) without skewing threat-metrics
+    // actionable share: use auth_failed in BOTH windows (not actionable types).
     for (let i = 0; i < 50; i++) {
       const t = new Date(
         baselineFrom.getTime() + (i / 50) * (currentFrom.getTime() - baselineFrom.getTime()),
@@ -377,21 +387,14 @@ async function seedPlatformKpis() {
     }
     for (let i = 0; i < 61; i++) {
       const t = new Date(currentFrom.getTime() + (i / 61) * (to.getTime() - currentFrom.getTime()));
-      eventRows.push([
-        'webhook_invalid_signature',
-        'HIGH',
-        '/webhooks/flutterwave',
-        META,
-        'confirmed',
-        t.toISOString(),
-      ]);
+      eventRows.push(['auth_failed', 'HIGH', '/auth/login', META, 'confirmed', t.toISOString()]);
     }
     for (let i = 0; i < 39; i++) {
       const t = new Date(currentFrom.getTime() + (i / 39) * (to.getTime() - currentFrom.getTime()));
-      eventRows.push(['rate_limited', 'MEDIUM', '/auth/login', META, 'false_positive', t.toISOString()]);
+      eventRows.push(['auth_failed', 'LOW', '/auth/login', META, 'false_positive', t.toISOString()]);
     }
     await insertEventChunks(qr, eventRows);
-    console.log('  post labeled evts: ~22% disposition precision improvement');
+    console.log('  post labeled evts: ~22% disposition precision improvement (auth_failed only)');
 
     for (let i = 0; i < 3; i++) {
       const created = new Date(currentFrom.getTime() + (i + 1) * 3 * 24 * 60 * 60 * 1000);
