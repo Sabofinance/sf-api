@@ -772,12 +772,21 @@ export interface SecurityThreatWindow {
   total: number;
   high_severity: number;
   detection_rate: number;
+  /** Share of actionable/structured event types (webhook/IAM/lockout/rate-limit). */
+  actionable_share_pct?: number;
 }
 
 export interface SecurityThreatMetricsResponse {
   baseline: SecurityThreatWindow;
   current: SecurityThreatWindow;
+  /**
+   * Relative change in actionable-event share.
+   * Positive = more structured detection mix (not “more attacks”).
+   */
   improvement_pct: number;
+  /** Relative change in HIGH+CRITICAL share — factual, not a quality score. */
+  high_severity_share_delta_pct?: number;
+  improvement_definition?: string;
   by_type: Array<{ event_type: string; count: number }>;
   generated_at: string;
 }

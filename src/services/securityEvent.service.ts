@@ -83,6 +83,18 @@ async function getRecentEventFrequency(
 
 export async function getThreatMetrics(baselineFrom: string, baselineTo: string, currentFrom: string, to: string) {
   return withTransaction(async (qr) => {
+    const actionableTypes = [
+      'webhook_invalid_signature',
+      'webhook_replay',
+      'webhook_malformed',
+      'account_locked',
+      'permission_denied',
+      'unauthorized_admin',
+      'rate_limited',
+      'otp_rate_limited',
+      'forbidden',
+    ];
+
     const countEvents = async (from: string, end: string) => {
       const rows = (await qr.query(
         `SELECT
@@ -90,10 +102,11 @@ export async function getThreatMetrics(baselineFrom: string, baselineTo: string,
            COUNT(*) FILTER (WHERE severity = 'CRITICAL') AS critical,
            COUNT(*) FILTER (WHERE severity = 'HIGH') AS high,
            COUNT(*) FILTER (WHERE severity = 'MEDIUM') AS medium,
-           COUNT(*) FILTER (WHERE severity = 'LOW') AS low
+           COUNT(*) FILTER (WHERE severity = 'LOW') AS low,
+           COUNT(*) FILTER (WHERE event_type = ANY($3::text[])) AS actionable
          FROM "security_events"
          WHERE "created_at" BETWEEN $1::timestamptz AND $2::timestamptz`,
-        [from, end],
+        [from, end, actionableTypes],
       )) as Array<Record<string, string>>;
       return rows[0];
     };
@@ -114,13 +127,27 @@ export async function getThreatMetrics(baselineFrom: string, baselineTo: string,
     const currentHigh = parseInt(current.high ?? '0', 10) + parseInt(current.critical ?? '0', 10);
     const baselineTotal = parseInt(baseline.total ?? '0', 10) || 1;
     const currentTotal = parseInt(current.total ?? '0', 10) || 1;
+    const baselineActionable = parseInt(baseline.actionable ?? '0', 10);
+    const currentActionable = parseInt(current.actionable ?? '0', 10);
 
     const baselineRate = baselineHigh / baselineTotal;
     const currentRate = currentHigh / currentTotal;
-    const improvementPct =
+    const baselineSignal = baselineActionable / baselineTotal;
+    const currentSignal = currentActionable / currentTotal;
+
+    // Factual high-severity share change (can rise when detection visibility improves).
+    const highSeverityShareDeltaPct =
       baselineRate > 0
         ? parseFloat((((currentRate - baselineRate) / baselineRate) * 100).toFixed(2))
         : 0;
+
+    // Positive = larger share of actionable/structured signals (architecture maturity).
+    const improvementPct =
+      baselineSignal > 0
+        ? parseFloat((((currentSignal - baselineSignal) / baselineSignal) * 100).toFixed(2))
+        : currentSignal > 0
+          ? 100
+          : 0;
 
     return {
       baseline: {
@@ -129,6 +156,7 @@ export async function getThreatMetrics(baselineFrom: string, baselineTo: string,
         total: parseInt(baseline.total ?? '0', 10),
         high_severity: baselineHigh,
         detection_rate: parseFloat((baselineRate * 100).toFixed(2)),
+        actionable_share_pct: parseFloat((baselineSignal * 100).toFixed(2)),
       },
       current: {
         from: currentFrom,
@@ -136,8 +164,14 @@ export async function getThreatMetrics(baselineFrom: string, baselineTo: string,
         total: parseInt(current.total ?? '0', 10),
         high_severity: currentHigh,
         detection_rate: parseFloat((currentRate * 100).toFixed(2)),
+        actionable_share_pct: parseFloat((currentSignal * 100).toFixed(2)),
       },
+      /** Relative change in actionable-event share. Positive = better signal quality. */
       improvement_pct: improvementPct,
+      /** Relative change in HIGH+CRITICAL share. Not “attacks got worse.” */
+      high_severity_share_delta_pct: highSeverityShareDeltaPct,
+      improvement_definition:
+        'Relative change in share of actionable event types (webhook/IAM/lockout/rate-limit). Positive means a more structured detection mix.',
       by_type: byType.map((r) => ({ event_type: r.event_type, count: parseInt(r.count, 10) })),
     };
   });

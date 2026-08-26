@@ -63,21 +63,27 @@ Datetimes must be ISO-8601 **with offset** (Zod). Use `new Date().toISOString()`
     total: number;
     high_severity: number;      // HIGH + CRITICAL counts
     detection_rate: number;     // high_severity / total * 100
+    actionable_share_pct: number; // structured webhook/IAM/lockout/rate-limit share
   };
   current: { /* same keys */ };
-  improvement_pct: number;      // change in high-severity *rate* vs baseline
+  improvement_pct: number;      // relative change in actionable_share_pct (positive = better signal mix)
+  high_severity_share_delta_pct: number; // factual HIGH+CRITICAL share Δ (not a quality score)
+  improvement_definition: string;
   by_type: Array<{ event_type: string; count: number }>;  // current window only
   generated_at: string;
 }
 ```
 
-`improvement_pct` is **not** “attacks went down.” It is `((currentRate - baselineRate) / baselineRate) * 100` where rate = high-severity / total. Negative means the current window has a **lower** high-severity share than baseline. Label the UI carefully (“change in high-severity share”, not “security improved 12%” unless you explain the formula).
+`improvement_pct` is **signal-quality change**, not “attacks went up/down.”  
+Label the primary card **“Actionable signal share Δ”** (or similar). Do **not** label it “security got worse” when `high_severity_share_delta_pct` is positive — higher high-severity share often means better visibility after architecture work.
 
 Suggested UI:
 
-- Four stat cards: current total, current high-severity, baseline total, `improvement_pct`
+- Four stat cards: current total, current high-severity, baseline total, `improvement_pct` (signal quality)
+- Optional secondary line: high-severity share % for each window (factual)
 - Horizontal bar or donut of `by_type`
-- Date-range picker that sets `baseline_from`, `current_from`, `to` (keep baseline length = current length)
+- Date-range picker that sets `baseline_from`, `current_from`, `to`
+  - For architecture narrative: baseline ≈ H2 2024, current ≈ 2025+ (or last 30d)
 
 ### 2. Event list
 
@@ -189,7 +195,7 @@ npm run seed:platform-kpis
 ```
 
 - `seed:security` — ~4,200 synthetic `security_events` (dashboard fill).
-- `seed:platform-kpis` — synthetic heartbeats / dispositions / 3 neutralized incidents / 9 control closures so `GET /admin/security/platform-kpis` can show ~99.2% uptime, ~22% detection improvement, 3 intrusions, 9 gaps.
+- `seed:platform-kpis` — synthetic heartbeats / dispositions / terminal deposits (~97% success) / 3 neutralized incidents / 9 control closures so `GET /admin/security/platform-kpis` can show ~99.2% uptime, ~97% transaction success, ~22% detection improvement, 3 intrusions, 9 gaps.
 
 **Caption any KPI screenshot as demonstration / seeded until you run the same endpoint on production with `persist=true` and `synthetic` omitted/false.**
 
@@ -205,7 +211,7 @@ npm run seed:platform-kpis
 | `transaction_success_pct` | completed ÷ terminal deposits/withdrawals/trades |
 | `detection_improvement_pct` | relative change in disposition precision (confirmed/(confirmed+false_positive)); fallback = high-severity share change |
 | `intrusions_neutralized` | critical incidents resolved with `outcome=neutralized` in current window |
-| `vulnerability_gaps_closed` | count of `security_control_closures` |
+| `vulnerability_gaps_closed` | count of `security_control_closures` with `closed_at <=` window end |
 
 Query: optional `baseline_from`, `current_from`, `to`, `persist=true` (writes `platform_kpi_snapshots`), `synthetic=true` (marks snapshot as demo).
 

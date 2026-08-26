@@ -13,7 +13,7 @@ export const PLATFORM_KPI_DEFINITIONS = {
   intrusions_neutralized:
     'Count of incident_events with severity=critical, status=resolved, outcome=neutralized, and resolved_at inside the current window.',
   vulnerability_gaps_closed:
-    'Count of rows in security_control_closures (auditable control register; each row is a shipped control with evidence_ref).',
+    'Count of security_control_closures with closed_at on or before the window end (cumulative auditable control register).',
 } as const;
 
 export interface PlatformKpiQuery {
@@ -114,7 +114,7 @@ async function countNeutralizedIntrusions(from: string, to: string): Promise<num
   });
 }
 
-async function countClosedControls(): Promise<{
+async function countClosedControls(to: string): Promise<{
   total: number;
   controls: Array<{ control_key: string; title: string; closed_at: Date; evidence_ref: string | null }>;
 }> {
@@ -122,7 +122,9 @@ async function countClosedControls(): Promise<{
     const controls = (await qr.query(
       `SELECT "control_key","title","closed_at","evidence_ref"
        FROM "security_control_closures"
+       WHERE "closed_at" <= $1::timestamptz
        ORDER BY "closed_at" ASC`,
+      [to],
     )) as Array<{
       control_key: string;
       title: string;
@@ -146,7 +148,7 @@ export async function computePlatformKpis(input: PlatformKpiQuery = {}): Promise
     dispositionPrecision(baselineFrom, currentFrom),
     dispositionPrecision(currentFrom, to),
     countNeutralizedIntrusions(currentFrom, to),
-    countClosedControls(),
+    countClosedControls(to),
   ]);
 
   let detectionMethod: PlatformKpiResult['detection_method'] = 'disposition_precision';
