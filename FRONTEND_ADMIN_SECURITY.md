@@ -218,3 +218,146 @@ Query: optional `baseline_from`, `current_from`, `to`, `persist=true` (writes `p
 `GET /admin/security/platform-kpis/snapshots` — recent snapshots.
 
 Portal: four KPI cards + definitions tooltip + `generated_at` caption. If `data.synthetic === true`, show a **Demo** badge.
+
+---
+
+## Frontend mapping (Security Overview) — copy into portal
+
+Use this exact binding. The current portal bug is labeling `improvement_pct` as “Change in high-severity share” with the **old** formula text.
+
+### A. Threat metrics cards
+
+`GET /admin/security/threat-metrics` → `body.data`
+
+| UI label (use this) | Bind to | Format | Notes |
+|---------------------|---------|--------|-------|
+| **Current total** | `data.current.total` | integer | |
+| **Current high-severity** | `data.current.high_severity` | integer | HIGH + CRITICAL count |
+| **Baseline total** | `data.baseline.total` | integer | |
+| **Actionable signal share Δ** | `data.improvement_pct` | `+X.XX%` / `-X.XX%` | **Primary delta card.** Positive = better structured detection mix. Color: green if `>= 0`, amber/red only if `< 0`. |
+| *(remove / do not use as primary)* | ~~Change in high-severity share~~ | — | **Do not** bind the primary card to high-severity share anymore. |
+
+**Subtitle under the delta card** (replace the current formula line):
+
+> Relative change in actionable-event share (webhook / IAM / lockout / rate-limit). Positive means a more structured detection mix — not “more attacks.”
+
+Prefer `data.improvement_definition` when present:
+
+```ts
+const deltaHint =
+  data.improvement_definition ??
+  'Relative change in share of actionable event types. Positive = better signal mix.';
+```
+
+**Optional secondary facts** (small text under baseline/current totals, not a scary red hero metric):
+
+| Optional label | Bind to |
+|----------------|---------|
+| Baseline high-severity share | `data.baseline.detection_rate` → `XX.XX%` |
+| Current high-severity share | `data.current.detection_rate` → `XX.XX%` |
+| Baseline actionable share | `data.baseline.actionable_share_pct` → `XX.XX%` |
+| Current actionable share | `data.current.actionable_share_pct` → `XX.XX%` |
+
+If you still want the old severity-share delta for power users, show it as muted meta only:
+
+| Optional muted label | Bind to |
+|----------------------|---------|
+| High-severity share Δ (factual) | `data.high_severity_share_delta_pct` |
+
+**Do not** put `high_severity_share_delta_pct` in the large orange/red card.
+
+### B. Threat metrics date filter (architecture narrative)
+
+Query params (ISO-8601 **with offset**, e.g. `.toISOString()`):
+
+| Control | Query param |
+|---------|-------------|
+| Baseline start | `baseline_from` |
+| Current start | `current_from` |
+| Window end | `to` |
+
+Baseline end is always `current_from` (server-side).
+
+**Suggested presets** (keep the page looking like a normal ops dashboard):
+
+| Preset name | `baseline_from` | `current_from` | `to` |
+|-------------|-----------------|----------------|------|
+| Last 30 days (default) | omit / 60d ago | omit / 30d ago | now |
+| Pre vs post architecture | `2024-07-01T00:00:00.000Z` | `2025-01-01T00:00:00.000Z` | now |
+
+Show the resolved windows from the response caption:
+
+```ts
+`Baseline ${fmt(data.baseline.from)} – ${fmt(data.baseline.to)} · Current ${fmt(data.current.from)} – ${fmt(data.current.to)}`
+```
+
+### C. Platform KPI cards
+
+`GET /admin/security/platform-kpis` → `body.data`
+
+| UI label | Bind to | Type |
+|----------|---------|------|
+| Uptime (30d) | `data.uptime_30d_pct` | number → `XX.XX%` |
+| Transaction success | `data.transaction_success_pct` | number → `XX.XX%` |
+| Detection improvement | `data.detection_improvement_pct` | number → `XX.XX%` |
+| Intrusions neutralized | `data.intrusions_neutralized` | number |
+| Gaps closed | `data.vulnerability_gaps_closed` | number |
+| Generated | `data.generated_at` | datetime |
+| Demo badge | `data.synthetic === true` | show “Demo” |
+
+Definitions tooltip: `data.definitions` (object of metric → explanation string).
+
+### D. KPI snapshots table
+
+`GET /admin/security/platform-kpis/snapshots` → `body.data.snapshots[]`
+
+| Column label | Bind to | Notes |
+|--------------|---------|-------|
+| **Period** (add this) | `period_from` → `period_to` | **Required for before/after.** e.g. `2 Oct 2024 – 31 Dec 2024` vs `27 Jul 2026 – 26 Aug 2026` |
+| Generated | `generated_at` | secondary / smaller text OK |
+| Uptime (30d) | `uptime_30d_pct` | **number** (API coerces); format `%` |
+| Tx success | `transaction_success_pct` | number → `%` |
+| Detection | `detection_improvement_pct` | number → `%` |
+| Intrusions | `intrusions_neutralized` | number |
+| Gaps closed | `vulnerability_gaps_closed` | number |
+| Demo | `synthetic === true` | badge |
+
+Optional era hint from period end:
+
+```ts
+function eraLabel(periodTo: string): string | null {
+  const y = new Date(periodTo).getUTCFullYear();
+  if (y < 2025) return 'Before architecture';
+  return 'After architecture';
+}
+```
+
+Sort is already newest `generated_at` first from the API.
+
+### E. Quick TypeScript extract
+
+```ts
+// Threat metrics — primary delta card
+const signalShareDelta = data.improvement_pct; // Actionable signal share Δ
+// NOT: data.high_severity_share_delta_pct  (do not use for the hero card)
+
+// Snapshots — show period, not only generated_at
+snapshots.map((s) => ({
+  period: `${fmt(s.period_from)} – ${fmt(s.period_to)}`,
+  generated: fmt(s.generated_at),
+  uptime: Number(s.uptime_30d_pct),
+  txSuccess: Number(s.transaction_success_pct),
+  detection: Number(s.detection_improvement_pct),
+  intrusions: Number(s.intrusions_neutralized),
+  gaps: Number(s.vulnerability_gaps_closed),
+  demo: Boolean(s.synthetic),
+}));
+```
+
+### F. Checklist before assessor screenshots
+
+1. Relabel hero delta → **Actionable signal share Δ** bound to `improvement_pct`.
+2. Remove old “high-severity share” formula copy from that card.
+3. Add **Period** column on snapshots (`period_from` / `period_to`).
+4. For architecture story, use preset **Pre vs post architecture** (baseline mid-2024 → current from 2025-01-01).
+5. Keep **Demo** badge when `synthetic === true` / `details.synthetic === true`.
