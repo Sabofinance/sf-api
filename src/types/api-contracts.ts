@@ -818,10 +818,10 @@ export interface PlatformKpisResponse {
     current_from: string;
     current_to: string;
   };
-  uptime_30d_pct: number;
-  transaction_success_pct: number;
+  uptime_30d_pct: number | null;
+  transaction_success_pct: number | null;
   detection_improvement_pct: number;
-  detection_method: 'disposition_precision' | 'high_severity_share';
+  detection_method: 'actionable_share';
   intrusions_neutralized: number;
   vulnerability_gaps_closed: number;
   definitions: Record<string, string>;

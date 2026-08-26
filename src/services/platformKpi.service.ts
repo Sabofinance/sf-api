@@ -1,15 +1,16 @@
 import { withTransaction } from '../database/transaction';
+import { AppError } from '../utils/errors';
 import { calculateUptime } from './reliability.service';
 import { getThreatMetrics } from './securityEvent.service';
 
 /** Canonical KPI definitions — keep in sync with admin security API docs when changing. */
 export const PLATFORM_KPI_DEFINITIONS = {
   uptime_30d_pct:
-    'Share of reliability_heartbeats in the window whose status is ok (component availability). Not wall-clock hosting SLA.',
+    'Share of reliability_heartbeats in the window whose status is ok (component availability). Not wall-clock hosting SLA. Null when the window has no heartbeats.',
   transaction_success_pct:
-    'completed / terminal across deposits + withdrawals + trades in the same window (existing reliability uptime helper).',
+    'completed / terminal across deposits + withdrawals + trades in the same window. Null when the window has no terminal transactions.',
   detection_improvement_pct:
-    'Preferred: relative change in disposition precision = confirmed / (confirmed + false_positive) between baseline and current windows. Fallback: relative change in high-severity event share (HIGH+CRITICAL)/total when dispositions are sparse.',
+    'Same as threat-metrics improvement_pct: relative change in share of actionable event types (webhook/IAM/lockout/rate-limit) vs the prior equal-length window. Positive = more structured detection mix.',
   intrusions_neutralized:
     'Count of incident_events with severity=critical, status=resolved, outcome=neutralized, and resolved_at inside the current window.',
   vulnerability_gaps_closed:
@@ -38,10 +39,10 @@ export interface PlatformKpiResult {
     current_from: string;
     current_to: string;
   };
-  uptime_30d_pct: number;
-  transaction_success_pct: number;
+  uptime_30d_pct: number | null;
+  transaction_success_pct: number | null;
   detection_improvement_pct: number;
-  detection_method: 'disposition_precision' | 'high_severity_share';
+  detection_method: 'actionable_share';
   intrusions_neutralized: number;
   vulnerability_gaps_closed: number;
   definitions: typeof PLATFORM_KPI_DEFINITIONS;
@@ -52,7 +53,7 @@ export interface PlatformKpiResult {
 }
 
 async function heartbeatUptimePct(from: string, to: string): Promise<{
-  uptime_pct: number;
+  uptime_pct: number | null;
   ok: number;
   total: number;
 }> {
@@ -70,7 +71,8 @@ async function heartbeatUptimePct(from: string, to: string): Promise<{
     return {
       total,
       ok,
-      uptime_pct: total > 0 ? parseFloat(((ok / total) * 100).toFixed(4)) : 100,
+      // Empty window is "no data", not 100% — avoids doctored-looking perfect scores.
+      uptime_pct: total > 0 ? parseFloat(((ok / total) * 100).toFixed(4)) : null,
     };
   });
 }
@@ -144,34 +146,41 @@ export async function computePlatformKpis(input: PlatformKpiQuery = {}): Promise
   const baselineFrom =
     input.baselineFrom ?? new Date(new Date(to).getTime() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [hb, txn, baselinePrec, currentPrec, neutralized, closures] = await Promise.all([
+  const toMs = new Date(to).getTime();
+  const currentFromMs = new Date(currentFrom).getTime();
+  const baselineFromMs = new Date(baselineFrom).getTime();
+  if (
+    Number.isNaN(toMs) ||
+    Number.isNaN(currentFromMs) ||
+    Number.isNaN(baselineFromMs) ||
+    currentFromMs >= toMs ||
+    baselineFromMs >= currentFromMs
+  ) {
+    throw new AppError(
+      'INVALID_DATE_RANGE',
+      'Require baseline_from < current_from < to (From must be before To).',
+      400,
+    );
+  }
+
+  const [hb, txn, baselinePrec, currentPrec, neutralized, closures, threat] = await Promise.all([
     heartbeatUptimePct(currentFrom, to),
     calculateUptime(currentFrom, to),
     dispositionPrecision(baselineFrom, currentFrom),
     dispositionPrecision(currentFrom, to),
     countNeutralizedIntrusions(currentFrom, to),
     countClosedControls(to),
+    getThreatMetrics(baselineFrom, currentFrom, currentFrom, to),
   ]);
 
-  let detectionMethod: PlatformKpiResult['detection_method'] = 'disposition_precision';
-  let detectionImprovementPct = 0;
-
-  const enoughLabels = baselinePrec.labeled >= 20 && currentPrec.labeled >= 20;
-  if (enoughLabels && baselinePrec.precision > 0) {
-    detectionImprovementPct = parseFloat(
-      (
-        ((currentPrec.precision - baselinePrec.precision) / baselinePrec.precision) *
-        100
-      ).toFixed(4),
-    );
-  } else {
-    detectionMethod = 'high_severity_share';
-    const threat = await getThreatMetrics(baselineFrom, currentFrom, currentFrom, to);
-    detectionImprovementPct = threat.improvement_pct;
-  }
+  // Always align Detection Δ with threat-metrics Signal Quality Δ (same improvement_pct).
+  const detectionImprovementPct = threat.improvement_pct;
+  const detectionMethod: PlatformKpiResult['detection_method'] = 'actionable_share';
 
   const generatedAt = input.generatedAt ?? new Date().toISOString();
   const synthetic = Boolean(input.synthetic);
+  const txnSuccessPct =
+    txn.terminal_transactions > 0 ? txn.uptime_pct : null;
 
   const result: PlatformKpiResult = {
     period: {
@@ -181,7 +190,7 @@ export async function computePlatformKpis(input: PlatformKpiQuery = {}): Promise
       current_to: to,
     },
     uptime_30d_pct: hb.uptime_pct,
-    transaction_success_pct: txn.uptime_pct,
+    transaction_success_pct: txnSuccessPct,
     detection_improvement_pct: detectionImprovementPct,
     detection_method: detectionMethod,
     intrusions_neutralized: neutralized,
@@ -194,8 +203,17 @@ export async function computePlatformKpis(input: PlatformKpiQuery = {}): Promise
         terminal: txn.terminal_transactions,
       },
       detection: {
-        baseline: baselinePrec,
-        current: currentPrec,
+        method: detectionMethod,
+        improvement_definition: threat.improvement_definition,
+        actionable_share: {
+          baseline_pct: threat.baseline.actionable_share_pct,
+          current_pct: threat.current.actionable_share_pct,
+        },
+        // Optional audit detail — not used for the displayed Detection Δ.
+        disposition: {
+          baseline: baselinePrec,
+          current: currentPrec,
+        },
       },
       closed_controls: closures.controls,
     },
@@ -215,8 +233,8 @@ export async function computePlatformKpis(input: PlatformKpiQuery = {}): Promise
         [
           currentFrom,
           to,
-          result.uptime_30d_pct,
-          result.transaction_success_pct,
+          result.uptime_30d_pct ?? 0,
+          result.transaction_success_pct ?? 0,
           result.detection_improvement_pct,
           result.detection_method,
           result.intrusions_neutralized,

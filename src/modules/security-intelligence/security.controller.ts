@@ -9,6 +9,7 @@ import {
 } from '../../services/platformKpi.service';
 import { withTransaction } from '../../database/transaction';
 import { ok } from '../../utils/apiResponse';
+import { AppError } from '../../utils/errors';
 
 const eventsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -104,6 +105,21 @@ export async function getSecurityThreatMetrics(req: Request, res: Response) {
     query.baseline_from ??
     preset?.baselineFrom ??
     new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+
+  if (new Date(currentFrom).getTime() >= new Date(to).getTime()) {
+    throw new AppError(
+      'INVALID_DATE_RANGE',
+      'Require current_from < to (From must be before To).',
+      400,
+    );
+  }
+  if (new Date(baselineFrom).getTime() >= new Date(currentFrom).getTime()) {
+    throw new AppError(
+      'INVALID_DATE_RANGE',
+      'Require baseline_from < current_from.',
+      400,
+    );
+  }
 
   const metrics = await getThreatMetrics(baselineFrom, currentFrom, currentFrom, to);
 

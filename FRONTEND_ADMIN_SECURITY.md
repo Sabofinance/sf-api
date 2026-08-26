@@ -79,11 +79,11 @@ Label the primary card **“Actionable signal share Δ”** (or similar). Do **n
 
 Suggested UI:
 
-- Four stat cards: current total, current high-severity, baseline total, `improvement_pct` (signal quality)
-- Optional secondary line: high-severity share % for each window (factual)
+- Three–four stat cards: current total (optional prior as secondary), current high-severity, `improvement_pct` (signal quality Δ)
+- Optional secondary line: high-severity share % for each window (factual) behind ⓘ
 - Horizontal bar or donut of `by_type`
 - Date-range picker that sets `baseline_from`, `current_from`, `to`
-  - For architecture narrative: baseline ≈ H2 2024, current ≈ 2025+ (or last 30d)
+  - Default last 30d; custom ranges for historical views only
 
 ### 2. Event list
 
@@ -207,17 +207,19 @@ npm run seed:platform-kpis
 
 | Field | Formula |
 |-------|---------|
-| `uptime_30d_pct` | ok heartbeats ÷ all heartbeats in current window |
-| `transaction_success_pct` | completed ÷ terminal deposits/withdrawals/trades |
-| `detection_improvement_pct` | relative change in disposition precision (confirmed/(confirmed+false_positive)); fallback = high-severity share change |
+| `uptime_30d_pct` | ok heartbeats ÷ all heartbeats in current window (**`null` if no heartbeats** — do not show 100%) |
+| `transaction_success_pct` | completed ÷ terminal deposits/withdrawals/trades (**`null` if no terminal txns**) |
+| `detection_improvement_pct` | **Same value as** threat-metrics `improvement_pct` (actionable signal share Δ). `detection_method` is always `actionable_share`. |
 | `intrusions_neutralized` | critical incidents resolved with `outcome=neutralized` in current window |
-| `vulnerability_gaps_closed` | count of `security_control_closures` with `closed_at <=` window end |
+| `vulnerability_gaps_closed` | count of `security_control_closures` with `closed_at <=` window end (cumulative) |
 
 Query: optional `baseline_from`, `current_from`, `to`, `persist=true` (writes `platform_kpi_snapshots`), `synthetic=true` (marks snapshot as demo).
 
+Invalid ranges (`current_from >= to` or `baseline_from >= current_from`) return **400** `INVALID_DATE_RANGE`.
+
 `GET /admin/security/platform-kpis/snapshots` — recent snapshots.
 
-Portal: four KPI cards + definitions tooltip + `generated_at` caption. If `data.synthetic === true`, show a **Demo** badge.
+Portal: KPI cards + definitions tooltip + `generated_at` caption. If `data.synthetic === true`, show a **Demo** badge.
 
 ---
 
@@ -263,6 +265,13 @@ Default on load: **Last 30 days** (`current_from = now-30d`, `to = now`; omit pa
 Quick chips only: **7d / 30d / 90d** (and maybe custom).  
 **No** chip named “Pre vs post architecture.”
 
+**Validation (required):**
+
+- Block Apply (and don’t call APIs) when `From >= To`.
+- On **400** `INVALID_DATE_RANGE`, show a short inline error — do not render KPI cards as 100% / 0.
+- If `uptime_30d_pct === null` or `transaction_success_pct === null`, display **—** (no data), never invent 100%.
+- Current ops target for a healthy last-30d window is ~**99%** uptime — that comes from live/seeded heartbeats, not an empty-window default.
+
 When the user wants an older picture (e.g. late 2024), they simply set From/To — same UI, same cards.
 
 ```ts
@@ -291,11 +300,11 @@ Backend still supports `preset=architecture_cutover` for API/testing — **do no
 
 | Card label | Field | Notes |
 |------------|-------|-------|
-| Uptime | `uptime_30d_pct` | Label can stay “Uptime” (not “Uptime 30d”) when range is user-selected |
-| Transaction success | `transaction_success_pct` | |
-| Detection Δ | `detection_improvement_pct` | Name it **Detection Δ**, not “Detection” — it is relative improvement vs the prior equal-length window |
+| Uptime | `uptime_30d_pct` | Show **—** when `null`. Expect ~99% on last 30d with seeded/live heartbeats |
+| Transaction success | `transaction_success_pct` | Show **—** when `null` |
+| Detection Δ | `detection_improvement_pct` | **Same number as** Threat “Signal quality Δ”. Format with `+`/`−` and color like the threat card |
 | Intrusions neutralized | `intrusions_neutralized` | |
-| Gaps closed | `vulnerability_gaps_closed` | |
+| Gaps closed | `vulnerability_gaps_closed` | Cumulative to `To` — optional subtext “to date” once in Definitions, not on every card |
 
 - One line of muted meta: `Generated {generated_at}`  
 - Definitions: single **ⓘ** popover using `definitions` — not inline essays  
@@ -307,12 +316,13 @@ Backend still supports `preset=architecture_cutover` for API/testing — **do no
 
 | Card label | Field |
 |------------|-------|
-| Events | `current.total` |
+| Events | `current.total` (optional muted secondary: prior `baseline.total`) |
 | High-severity | `current.high_severity` |
-| Prior period events | `baseline.total` |
-| Signal quality Δ | `improvement_pct` |
+| Signal quality Δ | `improvement_pct` — **must match** Platform KPI Detection Δ for the same range |
 
-Keep subtext **one short line max**, e.g. “vs prior period of equal length.”  
+**Do not** show a standalone **Prior period events** card — it invites “volume Δ should equal quality Δ” confusion. Fold prior total into the Events card as a small secondary line if needed.
+
+Keep subtext **one short line max**, e.g. one shared note under the row: “Deltas vs prior period of equal length.”  
 Put long definitions only in ⓘ.
 
 **Do not show by default:**
@@ -371,9 +381,12 @@ Same dashboard, different dates — that is what looks real.
 ### 8. Frontend checklist
 
 1. One global From/To (+ 7/30/90 chips) at top; refetch KPIs + threat + events together.  
-2. Delete architecture-named presets from the visible UI.  
-3. Short labels; move explanations into ⓘ.  
-4. Rename Detection → **Detection Δ**.  
-5. Snapshots: show **Period**, hide **era_label**.  
-6. Demote snapshots / history; don’t lead the page with two DEMO rows.  
-7. Keep default load = last 30 days, quiet numbers.
+2. **Reject `From >= To`** before calling APIs; handle 400 `INVALID_DATE_RANGE`.  
+3. Delete architecture-named presets from the visible UI.  
+4. Short labels; move explanations into ⓘ.  
+5. Rename Detection → **Detection Δ**; format `+`/`−` like Signal quality Δ (same value).  
+6. Drop standalone **Prior period events** card.  
+7. Show **—** for null uptime / txn success (never fake 100% on empty windows).  
+8. Snapshots: show **Period**, hide **era_label**.  
+9. Demote snapshots / history; don’t lead the page with two DEMO rows.  
+10. Keep default load = last 30 days; healthy current uptime target ≈ **99%**.
