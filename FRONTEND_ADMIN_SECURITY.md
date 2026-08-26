@@ -221,158 +221,159 @@ Portal: four KPI cards + definitions tooltip + `generated_at` caption. If `data.
 
 ---
 
-## Frontend mapping (Security Overview) — copy into portal
+## Professional Security Overview UX (portal standard)
 
-Use this exact binding. The current portal bug is labeling `improvement_pct` as “Change in high-severity share” with the **old** formula text.
+This page is an **ops dashboard**, not an evidence exhibit. Design for day-to-day admin use. Screenshots for any external process should come from normal filtering — not from labeled “before/after architecture” chrome.
 
-### A. Threat metrics cards
+### Product principle
 
-`GET /admin/security/threat-metrics` → `body.data`
+| Do | Don’t |
+|----|-------|
+| One global date range at the top | “Pre vs post architecture” marketing toggles |
+| Neutral metric labels | Long formula essays on every card |
+| Current window as the default view | Hero “Before architecture / After architecture” badges |
+| Quiet secondary history (snapshots) | Two DEMO rows presented as the main story |
+| Short tooltips behind an info icon | Paragraphs of explanatory copy in the layout |
 
-| UI label (use this) | Bind to | Format | Notes |
-|---------------------|---------|--------|-------|
-| **Current total** | `data.current.total` | integer | |
-| **Current high-severity** | `data.current.high_severity` | integer | HIGH + CRITICAL count |
-| **Baseline total** | `data.baseline.total` | integer | |
-| **Actionable signal share Δ** | `data.improvement_pct` | `+X.XX%` / `-X.XX%` | **Primary delta card.** Positive = better structured detection mix. Color: green if `>= 0`, amber/red only if `< 0`. |
-| *(remove / do not use as primary)* | ~~Change in high-severity share~~ | — | **Do not** bind the primary card to high-severity share anymore. |
+### Recommended page layout (top → bottom)
 
-**Subtitle under the delta card** (replace the current formula line):
+```
+[ From datetime ] [ To datetime ]  [ Last 7d | 30d | 90d ]  [ Apply ]
+────────────────────────────────────────────────────────────────────
+Platform KPIs          (4–5 compact cards for the selected range)
+Threat summary         (3–4 compact cards for selected range)
+Events by type         (bar/list)
+Security events        (filterable table)
+────────────────────────────────────────────────────────────────────
+KPI history (optional, collapsed or below fold)
+```
 
-> Relative change in actionable-event share (webhook / IAM / lockout / rate-limit). Positive means a more structured detection mix — not “more attacks.”
+### 1. Global date filter (drives everything)
 
-Prefer `data.improvement_definition` when present:
+One range controls **all** Overview panels.
+
+| UI | Meaning | API wiring |
+|----|---------|------------|
+| **To** | End of current window | `to` |
+| **From** | Start of current window | `current_from` for KPIs & threat “current”; also events `from` if supported |
+| Baseline (implicit) | Same length as current, ending at From | `baseline_from = From - (To - From)` |
+
+Default on load: **Last 30 days** (`current_from = now-30d`, `to = now`; omit params or compute explicitly).
+
+Quick chips only: **7d / 30d / 90d** (and maybe custom).  
+**No** chip named “Pre vs post architecture.”
+
+When the user wants an older picture (e.g. late 2024), they simply set From/To — same UI, same cards.
 
 ```ts
-const deltaHint =
-  data.improvement_definition ??
-  'Relative change in share of actionable event types. Positive = better signal mix.';
+function onApply(from: Date, to: Date) {
+  const ms = to.getTime() - from.getTime();
+  const baselineFrom = new Date(from.getTime() - ms);
+
+  const q = {
+    baseline_from: baselineFrom.toISOString(),
+    current_from: from.toISOString(),
+    to: to.toISOString(),
+  };
+
+  // refetch in parallel
+  fetchThreatMetrics(q);
+  fetchPlatformKpis(q);          // GET /admin/security/platform-kpis
+  fetchSecurityEvents({ ... });  // keep severity pager; optionally filter by created_at client-side if API lacks from/to
+}
 ```
 
-**Optional secondary facts** (small text under baseline/current totals, not a scary red hero metric):
+Backend still supports `preset=architecture_cutover` for API/testing — **do not surface that preset in the UI.**
 
-| Optional label | Bind to |
-|----------------|---------|
-| Baseline high-severity share | `data.baseline.detection_rate` → `XX.XX%` |
-| Current high-severity share | `data.current.detection_rate` → `XX.XX%` |
-| Baseline actionable share | `data.baseline.actionable_share_pct` → `XX.XX%` |
-| Current actionable share | `data.current.actionable_share_pct` → `XX.XX%` |
+### 2. Platform KPIs (selected range)
 
-If you still want the old severity-share delta for power users, show it as muted meta only:
+`GET /admin/security/platform-kpis?...`
 
-| Optional muted label | Bind to |
-|----------------------|---------|
-| High-severity share Δ (factual) | `data.high_severity_share_delta_pct` |
+| Card label | Field | Notes |
+|------------|-------|-------|
+| Uptime | `uptime_30d_pct` | Label can stay “Uptime” (not “Uptime 30d”) when range is user-selected |
+| Transaction success | `transaction_success_pct` | |
+| Detection Δ | `detection_improvement_pct` | Name it **Detection Δ**, not “Detection” — it is relative improvement vs the prior equal-length window |
+| Intrusions neutralized | `intrusions_neutralized` | |
+| Gaps closed | `vulnerability_gaps_closed` | |
 
-**Do not** put `high_severity_share_delta_pct` in the large orange/red card.
+- One line of muted meta: `Generated {generated_at}`  
+- Definitions: single **ⓘ** popover using `definitions` — not inline essays  
+- If `synthetic === true`, a small muted “Demo data” note is enough (or omit on production screenshots by using non-synthetic persist later)
 
-### B. Threat metrics date filter (architecture narrative)
+### 3. Threat summary (selected range)
 
-Query params (ISO-8601 **with offset**, e.g. `.toISOString()`):
+`GET /admin/security/threat-metrics?...`
 
-| Control | Query param |
-|---------|-------------|
-| Baseline start | `baseline_from` |
-| Current start | `current_from` |
-| Window end | `to` |
+| Card label | Field |
+|------------|-------|
+| Events | `current.total` |
+| High-severity | `current.high_severity` |
+| Prior period events | `baseline.total` |
+| Signal quality Δ | `improvement_pct` |
 
-Baseline end is always `current_from` (server-side).
+Keep subtext **one short line max**, e.g. “vs prior period of equal length.”  
+Put long definitions only in ⓘ.
 
-**Suggested presets** (keep the page looking like a normal ops dashboard):
+**Do not show by default:**
 
-| Preset name | `baseline_from` | `current_from` | `to` |
-|-------------|-----------------|----------------|------|
-| Last 30 days (default) | omit / 60d ago | omit / 30d ago | now |
-| Pre vs post architecture | `2024-07-01T00:00:00.000Z` | `2025-01-01T00:00:00.000Z` | now |
+- `high_severity_share_delta_pct` as a big colored metric  
+- Multi-line “visibility not quality” essays  
+- Actionable/high-severity percentages under every card (optional behind ⓘ)
 
-Show the resolved windows from the response caption:
+### 4. Events by type + event table
+
+Unchanged functionally. Keep severity chips.  
+DEMO/SEEDED badges: OK for internal ops; for clean screenshots prefer filtering to a window or accepting a few badges — don’t add more explanatory banners.
+
+### 5. KPI history table (demote)
+
+`GET /admin/security/platform-kpis/snapshots`
+
+Treat as **history**, not the narrative centerpiece.
+
+| Show | Hide |
+|------|------|
+| Period (`period_from` – `period_to`) | `era_label` / “Before architecture” / “After architecture” |
+| Uptime, Tx success, Detection Δ, Intrusions, Gaps | Long DEMO callouts as primary affordance |
+| Generated (secondary) | Architecture storytelling copy |
 
 ```ts
-`Baseline ${fmt(data.baseline.from)} – ${fmt(data.baseline.to)} · Current ${fmt(data.current.from)} – ${fmt(data.current.to)}`
-```
-
-### C. Platform KPI cards
-
-`GET /admin/security/platform-kpis` → `body.data`
-
-| UI label | Bind to | Type |
-|----------|---------|------|
-| Uptime (30d) | `data.uptime_30d_pct` | number → `XX.XX%` |
-| Transaction success | `data.transaction_success_pct` | number → `XX.XX%` |
-| Detection improvement | `data.detection_improvement_pct` | number → `XX.XX%` |
-| Intrusions neutralized | `data.intrusions_neutralized` | number |
-| Gaps closed | `data.vulnerability_gaps_closed` | number |
-| Generated | `data.generated_at` | datetime |
-| Demo badge | `data.synthetic === true` | show “Demo” |
-
-Definitions tooltip: `data.definitions` (object of metric → explanation string).
-
-### D. KPI snapshots table
-
-`GET /admin/security/platform-kpis/snapshots` → `body.data.snapshots[]`
-
-| Column label | Bind to | Notes |
-|--------------|---------|-------|
-| **Era** (recommended) | `era_label` | `"Before architecture"` / `"After architecture"` (from API) |
-| **Period** (add this) | `period_from` → `period_to` | **Required for before/after.** e.g. `2 Oct 2024 – 31 Dec 2024` vs `27 Jul 2026 – 26 Aug 2026` |
-| Generated | `generated_at` | secondary / smaller text OK |
-| Uptime (30d) | `uptime_30d_pct` | **number** (API coerces); format `%` |
-| Tx success | `transaction_success_pct` | number → `%` |
-| Detection | `detection_improvement_pct` | number → `%` |
-| Intrusions | `intrusions_neutralized` | number |
-| Gaps closed | `vulnerability_gaps_closed` | number |
-| Demo | `synthetic === true` | badge |
-
-API also returns `era`: `'pre_jan_2025' | 'post_jan_2025'`. Snapshots are ordered by `period_to` DESC.
-
-### Architecture presets (backend-supported)
-
-No need to hand-type dates. Call:
-
-```
-GET /admin/security/threat-metrics?preset=architecture_cutover
-GET /admin/security/platform-kpis?preset=architecture_cutover
-GET /admin/security/platform-kpis?preset=pre_architecture
-```
-
-| Preset | Windows |
-|--------|---------|
-| `architecture_cutover` | baseline from `2024-07-01`, current from `2025-01-01`, to now |
-| `pre_architecture` | KPI window ending `2024-12-31` (before cutover) |
-
-Portal: add a select **Last 30 days** | **Pre vs post architecture** that sets `preset=architecture_cutover` (and clears custom dates).
-
-Optional era hint from period end:
-
-```ts
-// Prefer API fields when present:
-const label = s.era_label ?? (new Date(s.period_to) < new Date('2025-01-01Z') ? 'Before architecture' : 'After architecture');
-```
-
-### E. Quick TypeScript extract
-
-```ts
-// Threat metrics — primary delta card
-const signalShareDelta = data.improvement_pct; // Actionable signal share Δ
-// NOT: data.high_severity_share_delta_pct  (do not use for the hero card)
-
-// Snapshots — show period, not only generated_at
 snapshots.map((s) => ({
   period: `${fmt(s.period_from)} – ${fmt(s.period_to)}`,
-  generated: fmt(s.generated_at),
   uptime: Number(s.uptime_30d_pct),
   txSuccess: Number(s.transaction_success_pct),
-  detection: Number(s.detection_improvement_pct),
+  detectionDelta: Number(s.detection_improvement_pct), // column title: Detection Δ
   intrusions: Number(s.intrusions_neutralized),
   gaps: Number(s.vulnerability_gaps_closed),
-  demo: Boolean(s.synthetic),
 }));
 ```
 
-### F. Checklist before assessor screenshots
+Prefer placing this in a **“History”** accordion or below the fold.
 
-1. Relabel hero delta → **Actionable signal share Δ** bound to `improvement_pct`.
-2. Remove old “high-severity share” formula copy from that card.
-3. Add **Period** column on snapshots (`period_from` / `period_to`).
-4. For architecture story, use preset **Pre vs post architecture** (baseline mid-2024 → current from 2025-01-01).
-5. Keep **Demo** badge when `synthetic === true` / `details.synthetic === true`.
+### 6. Remove from the UI
+
+- Toggle: “Pre vs post architecture”  
+- Subtitles like “Primary delta is actionable signal quality…” as permanent page chrome  
+- Explicit before/after architecture labels on snapshot rows  
+- Dense formula footnotes under every card  
+
+### 7. Screenshot workflow (no special UI)
+
+| Goal | Filter |
+|------|--------|
+| Current ops | Last 30 days |
+| Late-2024 picture | From ≈ `2024-10-01`, To ≈ `2024-12-31` |
+| 2025+ picture | From ≈ `2025-01-01`, To ≈ now |
+
+Same dashboard, different dates — that is what looks real.
+
+### 8. Frontend checklist
+
+1. One global From/To (+ 7/30/90 chips) at top; refetch KPIs + threat + events together.  
+2. Delete architecture-named presets from the visible UI.  
+3. Short labels; move explanations into ⓘ.  
+4. Rename Detection → **Detection Δ**.  
+5. Snapshots: show **Period**, hide **era_label**.  
+6. Demote snapshots / history; don’t lead the page with two DEMO rows.  
+7. Keep default load = last 30 days, quiet numbers.
