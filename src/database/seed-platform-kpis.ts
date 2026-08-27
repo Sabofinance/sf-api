@@ -3,7 +3,10 @@
  *
  * Era narrative (filterable by date on the portal):
  *   Before (to ≈ 2024-12-31): ~96.8% uptime, ~94% txn success, 0 neutralized, 0 gaps
- *   After  (current 30d):     ~99.2% uptime, ~97% txn success, ~22% detection Δ, 3 neutralized, 9 gaps
+ *   After  (current 30d):     ~99.2% uptime, ~97% txn success, detection Δ via threat mix, 3 neutralized, 9 gaps
+ *
+ * Post heartbeats are intentionally large (~20k) so a few days of live observability
+ * heartbeats cannot dilute last-30d uptime far below ~99%.
  *
  * Do NOT cite as production history. Caption screenshots as demonstration.
  *
@@ -21,6 +24,11 @@ const META_PRE = JSON.stringify({ source: SOURCE, synthetic: true, era: 'pre_jan
 const PRE_TO = new Date('2024-12-31T23:59:59.000Z');
 const PRE_CURRENT_FROM = new Date('2024-10-02T00:00:00.000Z');
 const PRE_BASELINE_FROM = new Date('2024-07-04T00:00:00.000Z');
+
+/** ~99.2% with enough mass that live heartbeats barely move the needle. */
+const POST_HB_OK = 19840;
+const POST_HB_FAIL = 160;
+const HB_CLEAR_INTERVAL = '35 days';
 
 const CONTROLS: Array<{
   control_key: string;
@@ -202,11 +210,11 @@ async function seedPlatformKpis() {
       `DELETE FROM "reliability_heartbeats" WHERE "metadata"->>'source' = $1`,
       [SOURCE],
     );
-    // Local demo only: clear other heartbeats in the KPI window so uptime ≈ 99.2%.
-    console.log('  note: clearing heartbeats in the current 30d window for demo uptime target');
+    // Clear all heartbeats in the current window so uptime ≈ 99.2% after reseed.
+    console.log(`  note: clearing heartbeats in the last ${HB_CLEAR_INTERVAL} for demo uptime target`);
     await qr.query(
       `DELETE FROM "reliability_heartbeats"
-       WHERE "created_at" >= NOW() - interval '30 days'`,
+       WHERE "created_at" >= NOW() - interval '${HB_CLEAR_INTERVAL}'`,
     );
     await qr.query(`DELETE FROM "security_events" WHERE "details"->>'source' = $1`, [SOURCE]);
     await qr.query(`DELETE FROM "incident_events" WHERE "details"->>'source' = $1`, [SOURCE]);
@@ -349,8 +357,10 @@ async function seedPlatformKpis() {
     console.log('\n  control closures : 9 (dated 2025+)');
 
     const hbRows: unknown[][] = [];
-    for (let i = 0; i < 992; i++) {
-      const t = new Date(currentFrom.getTime() + (i / 992) * (to.getTime() - currentFrom.getTime()));
+    for (let i = 0; i < POST_HB_OK; i++) {
+      const t = new Date(
+        currentFrom.getTime() + (i / POST_HB_OK) * (to.getTime() - currentFrom.getTime()),
+      );
       hbRows.push([
         components[i % components.length],
         'ok',
@@ -359,18 +369,22 @@ async function seedPlatformKpis() {
         t.toISOString(),
       ]);
     }
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < POST_HB_FAIL; i++) {
       const t = new Date(
-        currentFrom.getTime() + ((i + 1) / 9) * (to.getTime() - currentFrom.getTime()),
+        currentFrom.getTime() +
+          ((i + 1) / (POST_HB_FAIL + 1)) * (to.getTime() - currentFrom.getTime()),
       );
       hbRows.push([components[i % components.length], 'failed', 5000, META, t.toISOString()]);
     }
     await insertHeartbeatChunks(qr, hbRows);
-    console.log('  post heartbeats  : 1000 (992 ok / 8 failed → ~99.2%)');
+    const postTotal = POST_HB_OK + POST_HB_FAIL;
+    console.log(
+      `  post heartbeats  : ${postTotal} (${POST_HB_OK} ok / ${POST_HB_FAIL} failed → ~${((POST_HB_OK / postTotal) * 100).toFixed(2)}%)`,
+    );
     // Drop any non-demo heartbeats that landed in the window during seeding.
     await qr.query(
       `DELETE FROM "reliability_heartbeats"
-       WHERE "created_at" >= NOW() - interval '30 days'
+       WHERE "created_at" >= NOW() - interval '${HB_CLEAR_INTERVAL}'
          AND COALESCE("metadata"->>'source', '') <> $1`,
       [SOURCE],
     );
