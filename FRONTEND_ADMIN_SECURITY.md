@@ -195,7 +195,8 @@ npm run seed:platform-kpis
 ```
 
 - `seed:security` — ~4,200 synthetic `security_events` (dashboard fill).
-- `seed:platform-kpis` — synthetic heartbeats / dispositions / terminal deposits (~97% success) / 3 neutralized incidents / 9 control closures so `GET /admin/security/platform-kpis` can show ~99.2% uptime, ~97% transaction success, ~22% detection improvement, 3 intrusions, 9 gaps.
+- `seed:platform-kpis` — synthetic heartbeats / terminal deposits (~97% success) / 3 neutralized incidents / 9 control closures so filtering **From 2025-01-01 → now** shows ~99.2% uptime, ~97% transaction success, ~22% Detection Δ (aligned with Signal Quality), 3 intrusions, 9 gaps.
+- `seed:security` — event mix tuned so the same Jan 2025 → now window vs equal-length prior yields ~22% actionable-share Δ. Telemetry starts **2023-06-01**.
 
 **Caption any KPI screenshot as demonstration / seeded until you run the same endpoint on production with `persist=true` and `synthetic` omitted/false.**
 
@@ -372,11 +373,11 @@ Prefer placing this in a **“History”** accordion or below the fold.
 
 | Goal | Filter |
 |------|--------|
-| Current ops | Last 30 days |
-| Late-2024 picture | From ≈ `2024-10-01`, To ≈ `2024-12-31` |
-| 2025+ picture | From ≈ `2025-01-01`, To ≈ now |
+| **After (agreed metrics)** | **From `01/01/2025` → To = now** — ~99% uptime, ~97% txn, ~22–25% Detection Δ, 3 intrusions, 9 gaps |
+| **Before** | Any range **ending before 2025-01-01** (e.g. From `02/10/2024` → To `31/12/2024`) |
+| Seed telemetry starts | **1 Jun 2023** (nothing meaningful before that) |
 
-Same dashboard, different dates — that is what looks real.
+Same dashboard, different dates — that is what looks real. Default chips (7/30/90d) are fine for day-to-day ops; use the Jan 2025 → now range for the agreed after screenshot.
 
 ### 8. Frontend checklist
 

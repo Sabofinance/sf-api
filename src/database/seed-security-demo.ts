@@ -2,8 +2,11 @@
  * Synthetic security-event telemetry for local / staging dashboards.
  *
  * Era cut: 2025-01-01
- *   pre_jan_2025  — noisy, weakly classified signals (before architecture work)
- *   post_jan_2025 — structured webhook / IAM / lockout taxonomy (after)
+ *   pre_jan_2025  — noisier mix, ~36% actionable share
+ *   post_jan_2025 — structured mix, ~44% actionable share (~22% Δ vs pre)
+ *
+ * Filter tip: From=2025-01-01 → To=now for after metrics; ranges ending before 2025 for before.
+ * Seed starts: 2023-06-01
  *
  * Rows are tagged:
  *   details.synthetic = true
@@ -59,47 +62,65 @@ type CatalogRow = {
   paths: string[];
 };
 
-/** Pre-architecture: mostly undifferentiated auth noise, little structured detection. */
+/** Pre-architecture: mostly auth noise; ~36% actionable (for ~22% Δ vs post). */
 const PRE_CATALOG: CatalogRow[] = [
   {
     event_type: 'auth_failed',
-    weight: 55,
+    weight: 40,
     severities: ['LOW', 'LOW', 'LOW', 'MEDIUM'],
     paths: ['/auth/login', '/admin/auth/login'],
   },
   {
     event_type: 'invalid_token',
-    weight: 18,
+    weight: 12,
     severities: ['LOW', 'MEDIUM'],
     paths: ['/wallets', '/auth/me'],
   },
   {
     event_type: 'expired_token',
-    weight: 15,
+    weight: 8,
     severities: ['LOW'],
     paths: ['/wallets', '/trades'],
   },
   {
     event_type: 'invalid_otp',
-    weight: 8,
+    weight: 4,
     severities: ['LOW', 'MEDIUM'],
     paths: ['/auth/verify-otp'],
   },
   {
+    event_type: 'rate_limited',
+    weight: 15,
+    severities: ['MEDIUM', 'HIGH'],
+    paths: ['/auth/login', '/auth/forgot-password'],
+  },
+  {
+    event_type: 'webhook_invalid_signature',
+    weight: 8,
+    severities: ['HIGH'],
+    paths: ['/webhooks/flutterwave'],
+  },
+  {
+    event_type: 'account_locked',
+    weight: 5,
+    severities: ['HIGH'],
+    paths: ['/auth/login'],
+  },
+  {
     event_type: 'forbidden',
-    weight: 3,
+    weight: 4,
     severities: ['MEDIUM'],
     paths: ['/admin/kyc'],
   },
   {
-    event_type: 'webhook_invalid_signature',
-    weight: 1,
-    severities: ['HIGH'],
-    paths: ['/webhooks/flutterwave'],
+    event_type: 'permission_denied',
+    weight: 4,
+    severities: ['MEDIUM'],
+    paths: ['/admin/users'],
   },
 ];
 
-/** Post-architecture: structured detection surface (IAM, webhooks, lockout, rate limits). */
+/** Post-architecture: structured detection surface; ~44% actionable → ~22% Δ vs pre. */
 const POST_CATALOG: CatalogRow[] = [
   {
     event_type: 'auth_failed',
@@ -109,21 +130,15 @@ const POST_CATALOG: CatalogRow[] = [
   },
   {
     event_type: 'invalid_token',
-    weight: 10,
+    weight: 12,
     severities: ['LOW', 'MEDIUM'],
     paths: ['/wallets', '/admin/users', '/auth/me'],
   },
   {
     event_type: 'expired_token',
-    weight: 8,
+    weight: 10,
     severities: ['LOW'],
     paths: ['/wallets', '/trades', '/admin/dashboard'],
-  },
-  {
-    event_type: 'rate_limited',
-    weight: 12,
-    severities: ['MEDIUM', 'HIGH'],
-    paths: ['/auth/login', '/auth/forgot-password', '/admin/auth/login'],
   },
   {
     event_type: 'invalid_otp',
@@ -132,26 +147,32 @@ const POST_CATALOG: CatalogRow[] = [
     paths: ['/auth/verify-otp', '/admin/auth/verify-otp'],
   },
   {
+    event_type: 'rate_limited',
+    weight: 11,
+    severities: ['MEDIUM', 'HIGH'],
+    paths: ['/auth/login', '/auth/forgot-password', '/admin/auth/login'],
+  },
+  {
     event_type: 'otp_rate_limited',
-    weight: 5,
+    weight: 4,
     severities: ['MEDIUM'],
     paths: ['/auth/resend-otp', '/admin/auth/resend-otp'],
   },
   {
     event_type: 'account_locked',
-    weight: 6,
+    weight: 5,
     severities: ['HIGH'],
     paths: ['/auth/login'],
   },
   {
     event_type: 'webhook_invalid_signature',
-    weight: 10,
+    weight: 9,
     severities: ['HIGH', 'CRITICAL'],
     paths: ['/webhooks/flutterwave'],
   },
   {
     event_type: 'webhook_replay',
-    weight: 4,
+    weight: 3,
     severities: ['HIGH'],
     paths: ['/webhooks/flutterwave'],
   },
@@ -175,7 +196,7 @@ const POST_CATALOG: CatalogRow[] = [
   },
   {
     event_type: 'forbidden',
-    weight: 1,
+    weight: 2,
     severities: ['MEDIUM'],
     paths: ['/admin/kyc'],
   },
@@ -290,7 +311,8 @@ async function seedSecurityDemo() {
     console.log('\n  Demo window :', summary[0].first_at, '→', summary[0].last_at);
     console.log(`  Pre-2025    : ${summary[0].pre_n}`);
     console.log(`  Post-2025   : ${summary[0].post_n}`);
-    console.log('\n  Filter tip  : baseline_from=2024-07-01Z, current_from=2025-01-01Z, to=now');
+    console.log('\n  Filter tip  : From=2025-01-01 → To=now for after metrics (~22% Detection Δ)');
+    console.log('  Before tip  : any range ending before 2025-01-01 (seed starts 2023-06-01)');
     console.log('  These rows are synthetic. Label screenshots accordingly.\n');
   } catch (err) {
     console.error('\n  seed:security failed:', err);

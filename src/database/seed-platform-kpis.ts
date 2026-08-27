@@ -1,12 +1,12 @@
 /**
  * Demo seed for platform KPIs (local / staging only).
  *
- * Era narrative (filterable by date on the portal):
- *   Before (to ≈ 2024-12-31): ~96.8% uptime, ~94% txn success, 0 neutralized, 0 gaps
- *   After  (current 30d):     ~99.2% uptime, ~97% txn success, detection Δ via threat mix, 3 neutralized, 9 gaps
+ * Era cut: 2025-01-01
+ *   Before (filter ending before 2025): ~96.8% uptime, ~94% txn, 0 neutralized, 0 gaps
+ *   After  (From 2025-01-01 → now):     ~99.2% uptime, ~97% txn, ~22% Detection Δ, 3 neutralized, 9 gaps
  *
- * Post heartbeats are intentionally large (~20k) so a few days of live observability
- * heartbeats cannot dilute last-30d uptime far below ~99%.
+ * Post heartbeats span the full post-era window with enough mass that live
+ * observability traffic cannot dilute uptime far below ~99%.
  *
  * Do NOT cite as production history. Caption screenshots as demonstration.
  *
@@ -24,11 +24,11 @@ const META_PRE = JSON.stringify({ source: SOURCE, synthetic: true, era: 'pre_jan
 const PRE_TO = new Date('2024-12-31T23:59:59.000Z');
 const PRE_CURRENT_FROM = new Date('2024-10-02T00:00:00.000Z');
 const PRE_BASELINE_FROM = new Date('2024-07-04T00:00:00.000Z');
+const POST_FROM = new Date('2025-01-01T00:00:00.000Z');
 
-/** ~99.2% with enough mass that live heartbeats barely move the needle. */
-const POST_HB_OK = 19840;
-const POST_HB_FAIL = 160;
-const HB_CLEAR_INTERVAL = '35 days';
+/** ~99.2% with enough mass across Jan 2025 → now. */
+const POST_HB_OK = 39680;
+const POST_HB_FAIL = 320;
 
 const CONTROLS: Array<{
   control_key: string;
@@ -210,11 +210,12 @@ async function seedPlatformKpis() {
       `DELETE FROM "reliability_heartbeats" WHERE "metadata"->>'source' = $1`,
       [SOURCE],
     );
-    // Clear all heartbeats in the current window so uptime ≈ 99.2% after reseed.
-    console.log(`  note: clearing heartbeats in the last ${HB_CLEAR_INTERVAL} for demo uptime target`);
+    // Clear all heartbeats in the post-architecture era so uptime ≈ 99.2% after reseed.
+    console.log('  note: clearing heartbeats from 2025-01-01 onward for demo uptime target');
     await qr.query(
       `DELETE FROM "reliability_heartbeats"
-       WHERE "created_at" >= NOW() - interval '${HB_CLEAR_INTERVAL}'`,
+       WHERE "created_at" >= $1::timestamptz`,
+      [POST_FROM.toISOString()],
     );
     await qr.query(`DELETE FROM "security_events" WHERE "details"->>'source' = $1`, [SOURCE]);
     await qr.query(`DELETE FROM "incident_events" WHERE "details"->>'source' = $1`, [SOURCE]);
@@ -226,8 +227,9 @@ async function seedPlatformKpis() {
     ]);
 
     const to = new Date();
-    const currentFrom = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const baselineFrom = new Date(to.getTime() - 60 * 24 * 60 * 60 * 1000);
+    const currentFrom = POST_FROM;
+    const baselineMs = to.getTime() - currentFrom.getTime();
+    const baselineFrom = new Date(currentFrom.getTime() - baselineMs);
 
     const seedUserId = await ensureSeedUserId(qr);
     const components = ['fx_engine', 'background_jobs', 'api', 'database', 'webhook'];
@@ -248,54 +250,6 @@ async function seedPlatformKpis() {
     }
     await insertHeartbeatChunks(qr, preHb);
     console.log('  pre heartbeats   : 1000 (968 ok / 32 failed → ~96.8%)');
-
-    const preEvents: unknown[][] = [];
-    // Baseline Jul–Oct 2024: weak precision (~40%)
-    for (let i = 0; i < 40; i++) {
-      const t = new Date(
-        PRE_BASELINE_FROM.getTime() +
-          (i / 40) * (PRE_CURRENT_FROM.getTime() - PRE_BASELINE_FROM.getTime()),
-      );
-      preEvents.push(['auth_failed', 'LOW', '/auth/login', META_PRE, 'confirmed', t.toISOString()]);
-      preEvents.push([
-        'auth_failed',
-        'LOW',
-        '/auth/login',
-        META_PRE,
-        'false_positive',
-        t.toISOString(),
-      ]);
-      preEvents.push([
-        'auth_failed',
-        'LOW',
-        '/auth/login',
-        META_PRE,
-        'false_positive',
-        t.toISOString(),
-      ]);
-    }
-    // Current Oct–Dec 2024: still weak (~42%)
-    for (let i = 0; i < 42; i++) {
-      const t = new Date(
-        PRE_CURRENT_FROM.getTime() + (i / 42) * (PRE_TO.getTime() - PRE_CURRENT_FROM.getTime()),
-      );
-      preEvents.push(['auth_failed', 'MEDIUM', '/auth/login', META_PRE, 'confirmed', t.toISOString()]);
-    }
-    for (let i = 0; i < 58; i++) {
-      const t = new Date(
-        PRE_CURRENT_FROM.getTime() + (i / 58) * (PRE_TO.getTime() - PRE_CURRENT_FROM.getTime()),
-      );
-      preEvents.push([
-        'auth_failed',
-        'LOW',
-        '/auth/login',
-        META_PRE,
-        'false_positive',
-        t.toISOString(),
-      ]);
-    }
-    await insertEventChunks(qr, preEvents);
-    console.log('  pre labeled evts : weak disposition precision (~42%)');
 
     const preDeps: unknown[][] = [];
     const PRE_OK = 470;
@@ -339,7 +293,7 @@ async function seedPlatformKpis() {
       `    detection=${preKpis.detection_improvement_pct} neutralized=${preKpis.intrusions_neutralized} gaps=${preKpis.vulnerability_gaps_closed}`,
     );
 
-    // ── Post-architecture (from Jan 2025 / current window) ──
+    // ── Post-architecture (From 2025-01-01 → now) ──
     for (const c of CONTROLS) {
       await qr.query(
         `INSERT INTO "security_control_closures"
@@ -381,37 +335,18 @@ async function seedPlatformKpis() {
     console.log(
       `  post heartbeats  : ${postTotal} (${POST_HB_OK} ok / ${POST_HB_FAIL} failed → ~${((POST_HB_OK / postTotal) * 100).toFixed(2)}%)`,
     );
-    // Drop any non-demo heartbeats that landed in the window during seeding.
+    // Drop any non-demo heartbeats that landed in the post era during seeding.
     await qr.query(
       `DELETE FROM "reliability_heartbeats"
-       WHERE "created_at" >= NOW() - interval '${HB_CLEAR_INTERVAL}'
-         AND COALESCE("metadata"->>'source', '') <> $1`,
-      [SOURCE],
+       WHERE "created_at" >= $1::timestamptz
+         AND COALESCE("metadata"->>'source', '') <> $2`,
+      [POST_FROM.toISOString(), SOURCE],
     );
 
-    const eventRows: unknown[][] = [];
-    // Keep disposition math (~22% precision improvement) without skewing threat-metrics
-    // actionable share: use auth_failed in BOTH windows (not actionable types).
-    for (let i = 0; i < 50; i++) {
-      const t = new Date(
-        baselineFrom.getTime() + (i / 50) * (currentFrom.getTime() - baselineFrom.getTime()),
-      );
-      eventRows.push(['auth_failed', 'MEDIUM', '/auth/login', META, 'confirmed', t.toISOString()]);
-      eventRows.push(['auth_failed', 'LOW', '/auth/login', META, 'false_positive', t.toISOString()]);
-    }
-    for (let i = 0; i < 61; i++) {
-      const t = new Date(currentFrom.getTime() + (i / 61) * (to.getTime() - currentFrom.getTime()));
-      eventRows.push(['auth_failed', 'HIGH', '/auth/login', META, 'confirmed', t.toISOString()]);
-    }
-    for (let i = 0; i < 39; i++) {
-      const t = new Date(currentFrom.getTime() + (i / 39) * (to.getTime() - currentFrom.getTime()));
-      eventRows.push(['auth_failed', 'LOW', '/auth/login', META, 'false_positive', t.toISOString()]);
-    }
-    await insertEventChunks(qr, eventRows);
-    console.log('  post labeled evts: ~22% disposition precision improvement (auth_failed only)');
-
     for (let i = 0; i < 3; i++) {
-      const created = new Date(currentFrom.getTime() + (i + 1) * 3 * 24 * 60 * 60 * 1000);
+      const created = new Date(
+        currentFrom.getTime() + ((i + 1) / 4) * (to.getTime() - currentFrom.getTime()),
+      );
       const resolved = new Date(created.getTime() + 2 * 60 * 60 * 1000);
       await qr.query(
         `INSERT INTO "incident_events"
@@ -476,7 +411,7 @@ async function seedPlatformKpis() {
     console.log(`    intrusions_neutralized      : ${kpis.intrusions_neutralized}`);
     console.log(`    vulnerability_gaps_closed   : ${kpis.vulnerability_gaps_closed}`);
     console.log(`    snapshot_id                 : ${kpis.snapshot_id ?? '—'}`);
-    console.log('\n  Portal filter tip: baseline H2 2024 vs current_from=2025-01-01 (or last 30d).');
+    console.log('\n  Portal filter tip: From=2025-01-01 → To=now (after); any range ending before 2025 (before).');
     console.log('  Caption screenshots: Demonstration KPIs (seeded).\n');
   } catch (err) {
     console.error('\n  seed:platform-kpis failed:', err);
