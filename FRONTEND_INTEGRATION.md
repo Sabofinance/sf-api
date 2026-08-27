@@ -257,8 +257,12 @@ Unless noted otherwise, routes marked **[SA]** require `role = super_admin`.
 
 **Invite body:**
 ```json
-{ "email": "newadmin@example.com", "name": "Jane Doe" }
+{ "email": "newadmin@example.com" }
 ```
+
+Invite email opens `GET /admin/invites/setup-page?token=...` (hosted setup form).  
+Setup body must include `token`, `name`, `phone`, `password`. Then use `/admin/auth/login` + `/admin/auth/verify-otp`.  
+See `FRONTEND_ADMIN_INVITE.md`.
 
 ### 5.3 User Management
 

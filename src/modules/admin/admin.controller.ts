@@ -21,7 +21,7 @@ import { clearFailedLogins, recordFailedLogin, throwIfLocked } from '../../servi
 import { NotificationService } from '../../services/notificationService';
 import { generateUsername } from '../../services/usernameService';
 import { WalletService } from '../../services/walletService';
-import { ok } from '../../utils/apiResponse';
+import { created, ok } from '../../utils/apiResponse';
 import {
   Currency,
   DepositStatus,
@@ -35,10 +35,23 @@ import {
 } from '../../utils/enums';
 import { AppError, NotFoundError } from '../../utils/errors';
 
+import {
+  adminInviteSetupPageUrl,
+  adminPortalLoginUrl,
+} from './adminInviteLinks';
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+const adminPasswordSchema = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .regex(/[A-Z]/, 'Password must include an uppercase letter')
+  .regex(/[a-z]/, 'Password must include a lowercase letter')
+  .regex(/[0-9]/, 'Password must include a number');
+
 
 const verifyOtpSchema = z.object({
   email: z.string().email(),
@@ -1728,8 +1741,7 @@ export async function inviteAdmin(req: Request, res: Response) {
     return ok(res, { message: 'User is already an admin.' });
   }
 
-  const baseUrl = env.API_BASE_URL ?? 'http://localhost:3000';
-  const acceptLink = `${baseUrl}/admin/invites/accept?token=${encodeURIComponent(result.token!)}`;
+  const acceptLink = adminInviteSetupPageUrl(result.token!);
 
   await sendEmail({
     to: result.invitedEmail,
@@ -1738,7 +1750,11 @@ export async function inviteAdmin(req: Request, res: Response) {
     context: { acceptLink, roleLabel: 'admin' },
   });
 
-  return ok(res, { message: 'Admin invite created and email sent.', inviteId: result.inviteId });
+  return ok(res, {
+    message: 'Admin invite created and email sent.',
+    inviteId: result.inviteId,
+    setupUrl: acceptLink,
+  });
 }
 
 /**
@@ -1761,7 +1777,15 @@ export async function acceptAdminInvite(req: Request, res: Response) {
   const token = typeof tokenRaw === 'string' ? tokenRaw : '';
   if (!token) throw new AppError('INVITE_TOKEN_MISSING', 'Invite token is required', 400);
 
+  // Browser clicks on older API accept links → send them to the setup page.
+  const accept = String(req.headers.accept ?? '');
+  const wantsHtml = accept.includes('text/html') && !accept.includes('application/json');
+  if (wantsHtml) {
+    return res.redirect(302, adminInviteSetupPageUrl(token));
+  }
+
   const token_hash = crypto.createHash('sha256').update(token).digest('hex');
+
 
   const result = await withTransaction(async (qr) => {
     const inviteRows = (await qr.query(
@@ -1861,10 +1885,10 @@ export async function acceptAdminInvite(req: Request, res: Response) {
 }
 
 const adminSetupSchema = z.object({
-  token: z.string(),
+  token: z.string().min(1),
   name: z.string().min(2),
   phone: z.string().min(7).max(32),
-  password: z.string().min(8),
+  password: adminPasswordSchema,
 });
 
 /**
@@ -1914,12 +1938,12 @@ export async function completeAdminSetup(req: Request, res: Response) {
     const alreadyExists = (await qr.query(
       `SELECT id FROM "users" WHERE "email" = $1 OR "phone" = $2`,
       [invite.invited_email, input.phone],
-    )) as any[];
+    )) as Array<{ id: string }>;
 
     if (alreadyExists.length > 0) {
       throw new AppError(
         'USER_ALREADY_EXISTS',
-        'A user with this email or phone already exists.',
+        'A user with this email or phone already exists. If this is your account, open the invite link again to upgrade it, then log in with admin auth.',
         400,
       );
     }
@@ -1961,7 +1985,16 @@ export async function completeAdminSetup(req: Request, res: Response) {
     context: { name: result.name },
   });
 
-  return ok(res, { message: 'Admin account created and role granted.', inviteId: result.inviteId });
+  return created(res, {
+    message: 'Admin account created. Log in with email + password, then verify the OTP.',
+    inviteId: result.inviteId,
+    email: result.email,
+    next: {
+      login: 'POST /admin/auth/login',
+      verifyOtp: 'POST /admin/auth/verify-otp',
+      portalLoginUrl: adminPortalLoginUrl(),
+    },
+  });
 }
 
 /**

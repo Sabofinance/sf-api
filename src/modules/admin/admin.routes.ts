@@ -46,6 +46,7 @@ import {
   approveWithdrawal,
   rejectWithdrawal,
 } from './admin.controller';
+import { adminInviteSetupPage } from './adminInviteSetupPage';
 import { createOrUpdateCompanyRate, getCompanyRate, listCompanyRates } from '../company-rates/companyRates.controller';
 
 export const adminRouter = Router();
@@ -57,7 +58,8 @@ adminRouter.post('/auth/login', authRateLimiter, asyncHandler(adminLogin));
 adminRouter.post('/auth/verify-otp', asyncHandler(adminVerifyOtp));
 adminRouter.post('/auth/resend-otp', asyncHandler(adminResendOtp));
 
-// Public: accept admin invite token
+// Public: accept / setup admin invite
+adminRouter.get('/invites/setup-page', asyncHandler(adminInviteSetupPage));
 adminRouter.get('/invites/accept', asyncHandler(acceptAdminInvite));
 adminRouter.post('/invites/setup', asyncHandler(completeAdminSetup));
 
